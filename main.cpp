@@ -1,4 +1,5 @@
 #include <SFML/Graphics.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -28,7 +29,6 @@ struct Convert {
 };
 struct ProtoConnection {
     Matrix activityWeights;
-    Matrix predictionWeights;
     Convert convertActivity;
 };
 
@@ -56,10 +56,11 @@ class Neuron {
     Matrix activity;
     Matrix prediction;
     Matrix error;
+    Matrix z;
 
   public:
     bool isInput;
-    std::map<Neuron *, Connection> incoming = {};
+    std::map<Neuron *, Connection *> incoming = {};
     std::map<Neuron *, OutgoingConnection> outgoing = {};
     std::string name;
 
@@ -72,25 +73,65 @@ class Neuron {
 
     Matrix getActivity() { return this->activity; }
 
+    void reset() {
+        size_t rows = activity.innerSize();
+        size_t cols = activity.outerSize();
+
+        activity = Matrix::Zero(rows, cols);
+        prediction = Matrix::Zero(rows, cols);
+        error = Matrix::Zero(rows, cols);
+    }
+
     void setValues(Matrix activity) {
-        const Matrix inner =
-            Matrix::Ones(activity.outerSize(), this->activity.outerSize());
-        const Matrix outer =
-            Matrix::Ones(this->activity.innerSize(), activity.innerSize());
-        const auto converted = convertInput(activity, {outer, inner});
-        this->prediction = converted;
-        this->activity = converted;
+        this->prediction = activity;
+        this->activity = activity;
     }
 
     void recalcWeights() {
-        for (auto &[neuron, connection] : incoming) {
-            connection.actual.activityWeights +=
-                (this->error * neuron->activity) * 0.1;
+        Matrix z = this->prediction;
+        z.setZero();
+        for (auto &[n, c] : this->incoming) {
+            z += n->activity.cwiseProduct(c->actual.activityWeights);
         }
-
-        // C2*(IAi*C1) = ACi
-        // P = sum(AC*Wi)
-        // E = TAj - sum((C2 x (IAi x C1)) * Wi)
+        for (auto &[neuron, connection] : incoming) {
+            connection->actual.activityWeights +=
+                ((this->error.cwiseProduct(
+                      sigmoidDerivative(z).cwiseProduct(neuron->activity)) *
+                  1));
+            if (this->name == "output") {
+                // std::cout << "weights " << this->name << ":\n"
+                //           << std::fixed << std::setprecision(4)
+                //           << connection->actual.activityWeights << ",\n"
+                //           << this->error << ",\n"
+                //           << this->activity << "\n";
+                std::cout << "target=" << this->activity
+                          << " pred=" << this->prediction
+                          << " err=" << this->error << " z=" << z
+                          << " sig'=" << sigmoidDerivative(z)
+                          << " preAct=" << neuron->activity << " dW="
+                          << (this->error.cwiseProduct(sigmoidDerivative(z))
+                                  .cwiseProduct(neuron->activity) *
+                              0.1)
+                          << "\n";
+            }
+            // C2*(IAi*C1) = ACi
+            // P = sum(AC*Wi)
+            // E = TAj - sum((C2 x (IAi x C1)) * Wi)
+            // const Matrix error =
+            //     this->error.cwiseProduct(connection->actual.activityWeights);
+            // // std::cout << "weights: " << std::setprecision(10)
+            // //           << connection->actual.activityWeights << ", "
+            // //           << this->activity << "\n";
+            // connection->actual.convertActivity.inner -=
+            //     (neuron->activity * error *
+            //      connection->actual.convertActivity.outer) *
+            //     1.0;
+            // connection->actual.convertActivity.outer -=
+            //     (neuron->activity * connection->actual.convertActivity.inner
+            //     *
+            //      error) *
+            //     1.0;
+        }
     }
 
     void addPossibleConnection(Neuron *neuron) {
@@ -98,29 +139,26 @@ class Neuron {
         const auto &cols = neuron->activity.outerSize();
         const auto higher = ProtoConnection{
             .activityWeights = Matrix::Ones(rows, cols),
-            .predictionWeights = Matrix::Ones(rows, cols),
             .convertActivity =
                 {
-                    .outer = Matrix::Ones(this->activity.innerSize(), rows),
-                    .inner = Matrix::Ones(cols, this->activity.outerSize()),
+                    .outer = Matrix::Ones(rows, this->activity.innerSize()),
+                    .inner = Matrix::Ones(this->activity.outerSize(), cols),
                 },
         };
         const auto lower = ProtoConnection{
             .activityWeights = Matrix::Ones(rows, cols),
-            .predictionWeights = Matrix::Ones(rows, cols),
             .convertActivity =
                 {
-                    .outer = Matrix::Ones(this->activity.innerSize(), rows),
-                    .inner = Matrix::Ones(cols, this->activity.outerSize()),
+                    .outer = Matrix::Ones(rows, this->activity.innerSize()),
+                    .inner = Matrix::Ones(this->activity.outerSize(), cols),
                 },
         };
         const auto newConnection = ProtoConnection{
-            .activityWeights = Matrix::Ones(rows, cols),
-            .predictionWeights = Matrix::Ones(rows, cols),
+            .activityWeights = Matrix::Random(rows, cols) * 0.1,
             .convertActivity =
                 {
-                    .outer = Matrix::Ones(this->activity.innerSize(), rows),
-                    .inner = Matrix::Ones(cols, this->activity.outerSize()),
+                    .outer = Matrix::Ones(rows, this->activity.innerSize()),
+                    .inner = Matrix::Ones(this->activity.outerSize(), cols),
                 },
         };
         Connection *newPossibleConnection = new Connection{
@@ -135,19 +173,37 @@ class Neuron {
         neuron->possibleConnections.insert({this, newPossibleConnection});
     }
 
+    Matrix sigmoidDerivative(Matrix m) {
+        auto e = (-m.array()).exp().matrix();
+        auto res = (1 + e.array()).matrix();
+        return (e.array() / (res.array() * res.array())).matrix();
+    }
+
+    Matrix sigmoid(Matrix m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
+
     void recalcActivity() {
+        recalcPrediction();
+        recalcError();
         if (!isInput) {
-            recalcPrediction();
-            recalcError();
+
             Matrix delta = -error;
 
             for (const auto &[neuron, connection] : outgoing) {
                 const auto thisWeights =
-                    neuron->incoming.at(this).actual.activityWeights;
+                    connection.incomingConnection->actual.activityWeights;
+                Matrix z = neuron->prediction;
+                z.setZero();
+                for (auto &[n, c] : neuron->incoming) {
+                    z += n->activity.cwiseProduct(c->actual.activityWeights);
+                }
 
-                delta += thisWeights.cwiseProduct(neuron->error);
+                delta += thisWeights.cwiseProduct(
+                    neuron->error.cwiseProduct(sigmoidDerivative(z)));
             }
-            this->activity += delta * 0.1;
+            this->activity += delta;
+
+            //            std::cout<<"activity "<<this->name<<": " << activity
+            //            << "\n";
         }
 
         std::vector<Neuron *> toErase = {};
@@ -155,7 +211,7 @@ class Neuron {
             const auto activity =
                 convertInput(this->activity, posCon->actual.convertActivity);
 
-            const auto res = posCon->actual.predictionWeights.cwiseProduct(
+            const auto res = posCon->actual.activityWeights.cwiseProduct(
                 (neuron->activity -
                  (neuron->prediction +
                   activity.cwiseProduct(posCon->actual.activityWeights) *
@@ -169,12 +225,19 @@ class Neuron {
             // std::cout << "connection value " << this->name << " -> "
             //           << neuron->name << ": " << posCon->value << ", " << avg
             //           << "\n";
-            if (posCon->value < 0.2 && posCon->value > -0.2) {
-                neuron->incoming.insert({this, *posCon});
+            if (posCon->value < 2 && posCon->value > -2) {
+                neuron->incoming.insert({this, new Connection(*posCon)});
                 outgoing.insert({neuron, OutgoingConnection{
                                              .incomingConnection =
-                                                 &neuron->incoming.at(this)}});
-                // std::free(posCon);
+                                                 neuron->incoming.at(this)}});
+
+                // incoming.insert({neuron, new Connection(*posCon)});
+                // neuron->outgoing.insert(
+                //     {this, OutgoingConnection{.incomingConnection =
+                //                                   incoming.at(neuron)}});
+
+                std::cout << "connection executed" << this->name << "->"
+                          << neuron->name << "\n";
                 toErase.push_back(neuron);
             }
         }
@@ -190,20 +253,18 @@ class Neuron {
     void recalcPrediction() {
         this->prediction.setZero();
         for (const auto &[neuron, connection] : incoming) {
-            const auto activity = convertInput(
-                neuron->activity, connection.actual.convertActivity);
-            this->prediction +=
-                activity.cwiseProduct(connection.actual.predictionWeights);
+            const Matrix activity =
+                (neuron->activity)
+                    .cwiseProduct(connection->actual.activityWeights);
+            this->prediction += activity;
         }
+        this->prediction = sigmoid(this->prediction);
     }
 
     void recalcError() {
-        if (isInput) {
-            return;
-        }
-        totalError -= this->error.sum() / this->error.size();
+        totalError -= this->error.cwiseAbs().sum() / this->error.size();
         this->error = (activity - prediction);
-        totalError += this->error.sum() / this->error.size();
+        totalError += this->error.cwiseAbs().sum() / this->error.size();
     }
 };
 
@@ -211,14 +272,6 @@ std::vector<double> dataInput = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 std::vector<double> dataOutput = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
 
 int main() {
-    sf::RenderWindow window(sf::VideoMode(1280, 720), "SFML + ImGui");
-    window.setFramerateLimit(60);
-
-    if (!ImGui::SFML::Init(window))
-        return -1;
-
-    sf::Clock deltaClock;
-
     std::vector<Neuron *> inputs = {new Neuron(1, 1, true)};
     std::vector<Neuron *> outputs = {new Neuron(1, 1, true)};
 
@@ -227,12 +280,12 @@ int main() {
     inputs.at(0)->name = "input";
     outputs.at(0)->name = "output";
 
-    for (size_t i = 0; i < 4; i++) {
+    for (size_t i = 0; i < 10; i++) {
         neurons.push_back(new Neuron(1, 1));
         neurons.at(neurons.size() - 1)->name = "n" + std::to_string(i);
     }
-    for (size_t i = 0; i < 4; i++) {
-        for (size_t j = 0; j < 4; j++) {
+    for (size_t i = 0; i < 10; i++) {
+        for (size_t j = 0; j < 10; j++) {
             if (i == j) {
                 continue;
             }
@@ -250,17 +303,18 @@ int main() {
 
     double lastError = 1;
     const size_t indexes[] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
-    for (size_t i = 0; i < 1; i++) {
+    for (size_t i = 0; i < 500; i++) {
         for (size_t k = 0; k < 100; k++) {
-            const size_t index = indexes[i];
+            const size_t index = indexes[i % 10];
             for (size_t j = 0; j < inputs.size(); j++) {
                 std::set<Neuron *> visited = {};
                 std::set<Neuron *> children = {};
                 double input[] = {dataInput.at(index) / 10.0};
-                double output[] = {dataOutput.at(index)};
+                double output1[] = {dataOutput.at(index)};
                 inputs.at(j)->setValues(Eigen::Map<Matrix>(input, 1, 1));
-                outputs.at(j)->setValues(Eigen::Map<Matrix>(output, 1, 1));
+                outputs.at(0)->setValues(Eigen::Map<Matrix>(output1, 1, 1));
                 children.insert(inputs.at(j));
+                children.insert(outputs.at(0));
                 // std::cout << "out" << inputs.at(0)->outgoing.size();
                 while (children.size() > 0) {
                     auto child = *children.begin();
@@ -274,49 +328,93 @@ int main() {
                     children.erase(child);
                 }
             }
-            std::cout << "pass " << k << "===================\n"
-                      << std::fixed << std::setprecision(2) << totalError
-                      << totalError - lastError << "\n";
-            if ((abs(totalError - lastError)) <= 0) {
+
+            // std::cout << "pass " << k << "===================\n"
+            //           << std::fixed << std::setprecision(3) << totalError
+            //           << ", " << totalError - lastError << "\n";
+            if ((abs(totalError)) <= 0.001 ||
+                abs(lastError - totalError) <= 0.0) {
                 break;
             }
             lastError = totalError;
         }
+        for (size_t j = 0; j < neurons.size(); j++) {
+            neurons.at(j)->recalcWeights();
+        }
+        for (size_t j = 0; j < inputs.size(); j++) {
+            inputs.at(j)->recalcWeights();
+        }
+        for (size_t j = 0; j < outputs.size(); j++) {
+            outputs.at(j)->recalcWeights();
+        }
+        for (size_t j = 0; j < neurons.size(); j++) {
+            neurons.at(j)->reset();
+        }
+        for (size_t j = 0; j < inputs.size(); j++) {
+            inputs.at(j)->reset();
+        }
+        for (size_t j = 0; j < outputs.size(); j++) {
+            outputs.at(j)->reset();
+        }
+        totalError = 0;
+        lastError = 1;
     }
 
     {
-        // for (size_t i = 0; i < 4; i++) {
-        //     std::set<Neuron *> visited = {};
-        //     std::set<Neuron *> children = {};
-        //     for (size_t j = 0; j < inputs.size(); j++) {
-        //         double data[] = {dataInput.at(0) / 10.0};
-        //         inputs.at(j)->setValues(Eigen::Map<Matrix>(data, 1, 1));
-        //         children.insert(inputs.at(j));
-        //     }
-        //     for (size_t j = 0; j < outputs.size(); j++) {
-        //         outputs.at(j)->isInput = false;
-        //     }
+        for (size_t k = 0; k < 10; k++) {
+            for (size_t j = 0; j < neurons.size(); j++) {
+                neurons.at(j)->reset();
+            }
+            for (size_t j = 0; j < inputs.size(); j++) {
+                inputs.at(j)->reset();
+            }
+            for (size_t j = 0; j < outputs.size(); j++) {
+                outputs.at(j)->reset();
+            }
 
-        //     while (children.size() > 0) {
-        //         auto child = *children.begin();
-        //         visited.insert(child);
-        //         child->recalcActivity();
-        //         for (auto &c : child->outgoing) {
-        //             if (visited.find(c.first) == visited.end()) {
-        //                 children.insert(c.first);
-        //             }
-        //         }
-        //         children.erase(child);
-        //     }
-        // }
-        // std::cout << "number of incoming: " << outputs.at(0)->incoming.size()
-        //           << "\n";
-        // std::cout << "number of incoming: " << inputs.at(0)->incoming.size()
-        //           << "\n";
-        // const double res = outputs.at(0)->getActivity()(0, 0);
-        // std::cout << "result: " << res << ",  " << (res < 0.5 ? 0 : 1) <<
-        // "\n";
+            for (size_t i = 0; i < 100; i++) {
+                std::set<Neuron *> visited = {};
+                std::set<Neuron *> children = {};
+                for (size_t j = 0; j < inputs.size(); j++) {
+                    double data[] = {dataInput.at(k) / 10.0};
+                    inputs.at(j)->setValues(Eigen::Map<Matrix>(data, 1, 1));
+                    children.insert(inputs.at(j));
+                }
+                for (size_t j = 0; j < outputs.size(); j++) {
+                    outputs.at(j)->isInput = false;
+                }
+
+                while (children.size() > 0) {
+                    auto child = *children.begin();
+                    visited.insert(child);
+                    child->recalcActivity();
+                    for (auto &c : child->outgoing) {
+                        if (visited.find(c.first) == visited.end()) {
+                            children.insert(c.first);
+                        }
+                    }
+                    children.erase(child);
+                }
+            }
+            const double res = outputs.at(0)->getActivity().sum() /
+                               outputs.at(0)->getActivity().size();
+            std::cout << "result: " << res << ",  " << dataInput.at(k) << ", "
+                      << (res < 0.5 ? 0 : 1) << ", " << totalError << "\n";
+            // std::cout << "number of incoming: "
+            //           << outputs.at(0)->incoming.size() << "\n";
+            // std::cout << "number of incoming: " <<
+            // inputs.at(0)->incoming.size()
+            //           << "\n";
+        }
     }
+    return 0;
+    sf::RenderWindow window(sf::VideoMode(1280, 720), "SFML + ImGui");
+    window.setFramerateLimit(60);
+
+    if (!ImGui::SFML::Init(window))
+        return -1;
+
+    sf::Clock deltaClock;
 
     while (window.isOpen()) {
         sf::Event event;

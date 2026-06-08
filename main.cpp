@@ -57,6 +57,7 @@ class Neuron {
     Matrix prediction;
     Matrix error;
     Matrix z;
+    Matrix sd;
 
   public:
     bool isInput;
@@ -88,15 +89,10 @@ class Neuron {
     }
 
     void recalcWeights() {
-        Matrix z = this->prediction;
-        z.setZero();
-        for (auto &[n, c] : this->incoming) {
-            z += n->activity.cwiseProduct(c->actual.activityWeights);
-        }
         for (auto &[neuron, connection] : incoming) {
             connection->actual.activityWeights +=
                 ((this->error.cwiseProduct(
-                      sigmoidDerivative(z).cwiseProduct(neuron->activity)) *
+                      (this->sd).cwiseProduct(neuron->activity)) *
                   1));
             if (this->name == "output") {
                 // std::cout << "weights " << this->name << ":\n"
@@ -106,13 +102,7 @@ class Neuron {
                 //           << this->activity << "\n";
                 std::cout << "target=" << this->activity
                           << " pred=" << this->prediction
-                          << " err=" << this->error << " z=" << z
-                          << " sig'=" << sigmoidDerivative(z)
-                          << " preAct=" << neuron->activity << " dW="
-                          << (this->error.cwiseProduct(sigmoidDerivative(z))
-                                  .cwiseProduct(neuron->activity) *
-                              0.1)
-                          << "\n";
+                          << " err=" << this->error << "\n";
             }
             // C2*(IAi*C1) = ACi
             // P = sum(AC*Wi)
@@ -170,13 +160,13 @@ class Neuron {
         // this -> neuron
         possibleConnections.insert({neuron, newPossibleConnection});
         // neuron -> this
-        neuron->possibleConnections.insert({this, newPossibleConnection});
+        // neuron->possibleConnections.insert({this, newPossibleConnection});
     }
 
     Matrix sigmoidDerivative(Matrix m) {
-        auto e = (-m.array()).exp().matrix();
-        auto res = (1 + e.array()).matrix();
-        return (e.array() / (res.array() * res.array())).matrix();
+        auto e = (-m.array()).exp();
+        auto res = (1 + e);
+        return (e / (res * res)).matrix();
     }
 
     Matrix sigmoid(Matrix m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
@@ -191,14 +181,9 @@ class Neuron {
             for (const auto &[neuron, connection] : outgoing) {
                 const auto thisWeights =
                     connection.incomingConnection->actual.activityWeights;
-                Matrix z = neuron->prediction;
-                z.setZero();
-                for (auto &[n, c] : neuron->incoming) {
-                    z += n->activity.cwiseProduct(c->actual.activityWeights);
-                }
 
                 delta += thisWeights.cwiseProduct(
-                    neuron->error.cwiseProduct(sigmoidDerivative(z)));
+                    neuron->error.cwiseProduct((neuron->sd)));
             }
             this->activity += delta;
 
@@ -208,38 +193,39 @@ class Neuron {
 
         std::vector<Neuron *> toErase = {};
         for (auto &[neuron, posCon] : possibleConnections) {
-            const auto activity =
-                convertInput(this->activity, posCon->actual.convertActivity);
+            // const auto activity =
+            //     convertInput(this->activity, posCon->actual.convertActivity);
 
-            const auto res = posCon->actual.activityWeights.cwiseProduct(
-                (neuron->activity -
-                 (neuron->prediction +
-                  activity.cwiseProduct(posCon->actual.activityWeights) *
-                      posCon->value)));
-            const double avg = res.sum() / (double)res.size();
-            posCon->value += avg;
-            posCon->value =
-                posCon->value > connectionValueLimit    ? connectionValueLimit
-                : posCon->value < -connectionValueLimit ? -connectionValueLimit
-                                                        : posCon->value;
+            // const auto res = posCon->actual.activityWeights.cwiseProduct(
+            //     (neuron->activity -
+            //      (neuron->prediction +
+            //       activity.cwiseProduct(posCon->actual.activityWeights) *
+            //           posCon->value)));
+            // const double avg = res.sum() / (double)res.size();
+            // posCon->value += avg;
+            // posCon->value =
+            //     posCon->value > connectionValueLimit    ?
+            //     connectionValueLimit : posCon->value < -connectionValueLimit
+            //     ? -connectionValueLimit
+            //                                             : posCon->value;
             // std::cout << "connection value " << this->name << " -> "
             //           << neuron->name << ": " << posCon->value << ", " << avg
             //           << "\n";
-            if (posCon->value < 2 && posCon->value > -2) {
-                neuron->incoming.insert({this, new Connection(*posCon)});
-                outgoing.insert({neuron, OutgoingConnection{
-                                             .incomingConnection =
-                                                 neuron->incoming.at(this)}});
+            // if (posCon->value < 2 && posCon->value > -2) {
+            neuron->incoming.insert({this, new Connection(*posCon)});
+            outgoing.insert(
+                {neuron, OutgoingConnection{.incomingConnection =
+                                                neuron->incoming.at(this)}});
 
-                // incoming.insert({neuron, new Connection(*posCon)});
-                // neuron->outgoing.insert(
-                //     {this, OutgoingConnection{.incomingConnection =
-                //                                   incoming.at(neuron)}});
+            // incoming.insert({neuron, new Connection(*posCon)});
+            // neuron->outgoing.insert(
+            //     {this, OutgoingConnection{.incomingConnection =
+            //                                   incoming.at(neuron)}});
 
-                std::cout << "connection executed" << this->name << "->"
-                          << neuron->name << "\n";
-                toErase.push_back(neuron);
-            }
+            std::cout << "connection executed" << this->name << "->"
+                      << neuron->name << "\n";
+            toErase.push_back(neuron);
+            // }
         }
         for (auto neuron : toErase) {
             possibleConnections.erase(neuron);
@@ -258,6 +244,8 @@ class Neuron {
                     .cwiseProduct(connection->actual.activityWeights);
             this->prediction += activity;
         }
+        z = this->prediction;
+        sd = sigmoidDerivative(this->z);
         this->prediction = sigmoid(this->prediction);
     }
 
@@ -269,7 +257,7 @@ class Neuron {
 };
 
 std::vector<double> dataInput = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-std::vector<double> dataOutput = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
 
 int main() {
     std::vector<Neuron *> inputs = {new Neuron(1, 1, true)};
@@ -290,6 +278,7 @@ int main() {
                 continue;
             }
             neurons.at(i)->addPossibleConnection(neurons.at(j));
+            neurons.at(j)->addPossibleConnection(neurons.at(i));
         }
         for (size_t j = 0; j < inputs.size(); j++) {
             inputs.at(j)->addPossibleConnection(neurons.at(i));
@@ -303,7 +292,7 @@ int main() {
 
     double lastError = 1;
     const size_t indexes[] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
-    for (size_t i = 0; i < 500; i++) {
+    for (size_t i = 0; i < 100; i++) {
         for (size_t k = 0; k < 100; k++) {
             const size_t index = indexes[i % 10];
             for (size_t j = 0; j < inputs.size(); j++) {

@@ -13,6 +13,7 @@
 #include <eigen3/Eigen/Dense>
 #include <imgui-SFML.h>
 #include <imgui.h>
+#include <implot.h>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -42,15 +43,19 @@ struct OutgoingConnection {
     Connection *incoming;
 };
 
-double totalError = 0;
 const double connectionValueLimit = 2;
+
+struct RecalcResponse {
+    Matrix oldError;
+    Matrix newError;
+};
+
 class Neuron {
   protected:
     std::map<Neuron *, Connection *> possibleConnections;
     Matrix activity;
     Matrix prediction;
     Matrix error;
-    Matrix z;
     Matrix sd;
 
   public:
@@ -68,6 +73,8 @@ class Neuron {
 
     Matrix getActivity() { return this->activity; }
 
+    Matrix getPrediction() { return this->prediction; }
+
     void reset() {
         size_t rows = activity.rows();
         size_t cols = activity.cols();
@@ -84,7 +91,6 @@ class Neuron {
 
     void recalcWeights() {
         for (auto &[neuron, connection] : incoming) {
-            const Matrix sd = sigmoidDerivative(z);
             connection->actual.activityWeights +=
                 ((this->error.cwiseProduct(
                       (this->sd).cwiseProduct(neuron->activity)) *
@@ -126,9 +132,21 @@ class Neuron {
 
     Matrix sigmoid(Matrix m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
 
+    void recalcConnectionValue(Neuron *neuron, Connection *connection) {
+        Matrix ta = sigmoid(
+            this->activity.cwiseProduct(connection->actual.activityWeights));
+
+        const auto res =
+            ta.cwiseProduct(neuron->error).cwiseProduct(neuron->prediction);
+        const double avg = res.sum();
+        connection->value += avg;
+        connection->value =
+            connection->value > connectionValueLimit    ? connectionValueLimit
+            : connection->value < -connectionValueLimit ? -connectionValueLimit
+                                                        : connection->value;
+    }
+
     void recalcActivity() {
-        recalcPrediction();
-        recalcError();
         if (!isInput) {
 
             Matrix delta = -error;
@@ -136,64 +154,38 @@ class Neuron {
             for (const auto &[neuron, connection] : outgoing) {
                 const auto thisWeights =
                     connection.incoming->actual.activityWeights;
+
                 delta += thisWeights.cwiseProduct(
                     neuron->error.cwiseProduct(neuron->sd));
 
-                Matrix ta = sigmoid(this->activity.cwiseProduct(
-                    connection.incoming->actual.activityWeights));
-
-                const auto res =
-                    ta.cwiseProduct(connection.incoming->actual.activityWeights)
-                        .cwiseProduct(neuron->error);
-                const double avg = res.sum();
-                connection.incoming->value += avg;
-                connection.incoming->value =
-                    connection.incoming->value > connectionValueLimit
-                        ? connectionValueLimit
-                    : connection.incoming->value < -connectionValueLimit
-                        ? -connectionValueLimit
-                        : connection.incoming->value;
+                recalcConnectionValue(neuron, connection.incoming);
             }
             this->activity += delta;
         }
-
+    }
+    RecalcResponse update() {
+        recalcPrediction();
+        const Matrix oldError = this->error;
+        recalcError();
+        const Matrix newError = this->error;
+        recalcActivity();
         std::vector<Neuron *> toErase = {};
         for (auto &[neuron, posCon] : possibleConnections) {
-            Matrix ta = sigmoid(
-                this->activity.cwiseProduct(posCon->actual.activityWeights));
 
-            const auto res = ta.cwiseProduct(posCon->actual.activityWeights)
-                                 .cwiseProduct(neuron->error);
-            const double avg = res.sum();
-            posCon->value += avg;
-            posCon->value =
-                posCon->value > connectionValueLimit    ? connectionValueLimit
-                : posCon->value < -connectionValueLimit ? -connectionValueLimit
-                                                        : posCon->value;
+            recalcConnectionValue(neuron, posCon);
 
-            if (posCon->value > 0.5) {
+            if (posCon->value > 0.0) {
                 toErase.push_back(neuron);
                 neuron->incoming.insert({this, new Connection(*posCon)});
                 outgoing.insert(
                     {neuron, OutgoingConnection{
                                  .incoming = neuron->incoming.at(this)}});
-
-                // incoming.insert({neuron, new Connection(*posCon)});
-                // neuron->outgoing.insert(
-                //     {this,
-                //      OutgoingConnection{.incoming = incoming.at(neuron)}});
-
-                std::cout << "connection executed" << this->name << "->"
-                          << neuron->name << "\n";
             }
         }
         for (auto neuron : toErase) {
             possibleConnections.erase(neuron);
-            // neuron->possibleConnections.erase(this);
-
-            // std::cout << "connection executed " << this->name << " -> "
-            //           << neuron->name << "\n";
         }
+        return {oldError, newError};
     }
 
     void recalcPrediction() {
@@ -206,53 +198,55 @@ class Neuron {
         this->prediction = sigmoid(this->prediction);
     }
 
-    void recalcError() {
-        totalError -= this->error.cwiseAbs().sum() / this->error.size();
-        this->error = (activity - prediction);
-        totalError += this->error.cwiseAbs().sum() / this->error.size();
-    }
+    void recalcError() { this->error = (activity - prediction); }
 };
 
 std::vector<double> dataInput = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
-// std::vector<double> dataOutput = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+std::vector<double> dataOutput = {1, 0, 1, 0, 1, 0, 1, 0, 1, 0};
+//  std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
+//  std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1};
+//  std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
+
 const size_t indexes[] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
-
-void drawLine(sf::RenderWindow &window, sf::Vector2f start, sf::Vector2f end,
-              float width, sf::Color color) {
-    sf::Vector2f delta = end - start;
-    float length = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-    float angle = std::atan2(delta.y, delta.x) * 180.f / 3.14159f;
-
-    sf::RectangleShape line(sf::Vector2f(length, width));
-    line.setPosition(start);
-    line.setRotation(angle);
-    line.setFillColor(color);
-    window.draw(line);
-}
-
 class Network {
   public:
-    std::vector<Neuron *> neurons = {};
-    std::vector<Neuron *> inputs = {new Neuron(1, 1, true)};
+    std::vector<Neuron *> inputs = {};
     std::vector<Neuron *> outputs = {new Neuron(1, 1, true)};
-    size_t maxPass = 500;
-    size_t maxCycle = 100;
-    size_t pass = 0;
-    size_t cycle = 0;
+    std::vector<Neuron *> neurons = {};
+    std::vector<Neuron *> biases = {};
+    std::vector<Neuron *> all;
 
-    double lastError = 1;
-    double totalError = 0;
+    size_t cycleIndex = 0;
+    size_t inferenceIndex = 0;
+
+    size_t maxCycle = 200;
+    size_t maxInference = 100;
+
+    double totalError;
+    double lastError;
+
     Network() {
-        inputs.at(0)->name = "input";
+        for (size_t k = 0; k < 10; k++) {
+            const auto n = new Neuron(1, 1, true);
+            inputs.push_back(n);
+            n->name = "input";
+        }
+        for (size_t k = 0; k < 2; k++) {
+            const auto n = new Neuron(1, 1, true);
+            biases.push_back(n);
+            Matrix d(1, 1);
+            d(0, 0) = 1.f;
+            n->setValues(d);
+            n->name = "bias";
+        }
         outputs.at(0)->name = "output";
 
         for (size_t i = 0; i < 10; i++) {
             neurons.push_back(new Neuron(1, 1));
             neurons.at(neurons.size() - 1)->name = "n" + std::to_string(i);
         }
-        for (size_t i = 0; i < 10; i++) {
-            for (size_t j = 0; j < 10; j++) {
+        for (size_t i = 0; i < neurons.size(); i++) {
+            for (size_t j = 0; j < neurons.size(); j++) {
                 if (i == j) {
                     continue;
                 }
@@ -267,71 +261,139 @@ class Network {
                 outputs.at(j)->addPossibleConnection(neurons.at(i));
                 neurons.at(i)->addPossibleConnection(outputs.at(j));
             }
-        }
-    }
-
-    void update() {
-        if (pass == maxPass)
-            return;
-        if (cycle == maxCycle) {
-            cycle = 0;
-            return;
-        }
-        const size_t index = indexes[pass % 10];
-        for (size_t j = 0; j < inputs.size(); j++) {
-            std::set<Neuron *> visited = {};
-            std::set<Neuron *> children = {};
-            double input[] = {dataInput.at(index) / 10.0};
-            double output1[] = {dataOutput.at(index)};
-            inputs.at(j)->setValues(Eigen::Map<Matrix>(input, 1, 1));
-            outputs.at(0)->setValues(Eigen::Map<Matrix>(output1, 1, 1));
-            children.insert(inputs.at(j));
-            children.insert(outputs.at(0));
-
-            while (children.size() > 0.2) {
-                auto child = *children.begin();
-                visited.insert(child);
-                child->recalcActivity();
-                for (auto &c : child->outgoing) {
-                    if (visited.find(c.first) == visited.end()) {
-                        children.insert(c.first);
-                    }
-                }
-                children.erase(child);
+            for (size_t j = 0; j < biases.size(); j++) {
+                biases.at(j)->addPossibleConnection(neurons.at(i));
+                neurons.at(i)->addPossibleConnection(biases.at(j));
             }
         }
+        all.insert(all.end(), neurons.begin(), neurons.end());
+        all.insert(all.end(), inputs.begin(), inputs.end());
+        all.insert(all.end(), outputs.begin(), outputs.end());
+        all.insert(all.end(), biases.begin(), biases.end());
+        // totalError = inputs.size() + outputs.size() + neurons.size();
+    }
 
-        if ((abs(totalError)) <= 0.001 || abs(lastError - totalError) <= 0.0) {
-            pass++;
-            cycle++;
-            lastError = totalError;
-            return;
+    bool inference(size_t index) {
+        if (inferenceIndex == maxInference) {
+            return true;
         }
-        for (size_t j = 0; j < neurons.size(); j++) {
-            neurons.at(j)->recalcWeights();
+        std::set<Neuron *> visited = {};
+        std::set<Neuron *> children = {};
+        double output1[] = {dataOutput.at(index)};
+        for (size_t k = 0; k < inputs.size(); k++) {
+            Matrix d(1, 1);
+            if (k == dataInput.at(index)) {
+                d(0, 0) = 1;
+            } else {
+                d(0, 0) = 0;
+            }
+            inputs.at(k)->setValues(d);
+            children.insert(inputs.at(k));
         }
-        for (size_t j = 0; j < inputs.size(); j++) {
-            inputs.at(j)->recalcWeights();
+        outputs.at(0)->setValues(Eigen::Map<Matrix>(output1, 1, 1));
+        children.insert(outputs.at(0));
+        while (children.size() > 0) {
+            auto child = *children.begin();
+            visited.insert(child);
+
+            const auto errors = child->update();
+            totalError -= errors.oldError.sum();
+            totalError += errors.newError.sum();
+
+            for (auto &c : child->outgoing) {
+                if (visited.find(c.first) == visited.end()) {
+                    children.insert(c.first);
+                }
+            }
+            children.erase(child);
         }
-        for (size_t j = 0; j < outputs.size(); j++) {
-            outputs.at(j)->recalcWeights();
+
+        if ((abs(totalError)) <= 0.0001 || abs(lastError - totalError) <= 0.0) {
+            return true;
         }
-        for (size_t j = 0; j < neurons.size(); j++) {
-            neurons.at(j)->reset();
+        lastError = totalError;
+        inferenceIndex++;
+        return false;
+    }
+
+    double update() {
+        if (cycleIndex == maxCycle) {
+            return totalError;
         }
-        for (size_t j = 0; j < inputs.size(); j++) {
-            inputs.at(j)->reset();
+
+        if (!inference(indexes[cycleIndex % 10])) {
+            return totalError;
         }
-        for (size_t j = 0; j < outputs.size(); j++) {
-            outputs.at(j)->reset();
+        inferenceIndex = 0;
+
+        for (auto &n : all) {
+            n->recalcWeights();
         }
+        for (auto &n : all) {
+            n->reset();
+        }
+        double currentError = totalError;
         totalError = 0;
         lastError = 1;
-        pass++;
-        cycle++;
+        cycleIndex++;
+        return currentError;
+    }
+
+    void test() {
+        for (size_t k = 0; k < 10; k++) {
+            for (auto &n : all) {
+                n->reset();
+            }
+
+            for (size_t i = 0; i < maxInference; i++) {
+                std::set<Neuron *> visited = {};
+                std::set<Neuron *> children = {};
+                for (size_t j = 0; j < inputs.size(); j++) {
+                    Matrix d(1, 1);
+                    if (j == dataInput.at(k)) {
+                        d(0, 0) = 1;
+                    } else {
+                        d(0, 0) = 0;
+                    }
+                    inputs.at(j)->setValues(d);
+                    children.insert(inputs.at(j));
+                }
+                for (size_t j = 0; j < outputs.size(); j++) {
+                    outputs.at(j)->isInput = false;
+                }
+
+                while (children.size() > 0) {
+                    auto child = *children.begin();
+                    visited.insert(child);
+                    child->update();
+                    for (auto &c : child->outgoing) {
+                        if (visited.find(c.first) == visited.end()) {
+                            children.insert(c.first);
+                        }
+                    }
+                    children.erase(child);
+                }
+            }
+            const double res = outputs.at(0)->getActivity().sum() /
+                               outputs.at(0)->getActivity().size();
+            std::cout << "result=" << res << ", input=" << dataInput.at(k)
+                      << ", res=" << (res < 0.5 ? 0 : 1) << ", totalError"
+                      << totalError << "\n";
+        }
     }
 };
+void drawLine(sf::RenderWindow &window, sf::Vector2f start, sf::Vector2f end,
+              float width, sf::Color color) {
+    sf::Vector2f delta = end - start;
+    float length = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+    float angle = std::atan2(delta.y, delta.x) * 180.f / 3.14159f;
 
+    sf::RectangleShape line(sf::Vector2f(length, width));
+    line.setPosition(start);
+    line.setRotation(angle);
+    line.setFillColor(color);
+    window.draw(line);
+}
 enum NeuronType { Output, Input, Normal, Hidden };
 struct NeuronObject {
     NeuronType type;
@@ -340,6 +402,13 @@ struct NeuronObject {
 int main() {
 
     Network network = Network();
+
+    for (size_t k = 0; k < network.maxCycle * network.maxInference; k++) {
+        network.update();
+    }
+    network.test();
+    return 0;
+
     std::map<Neuron *, NeuronObject> neuronsElems;
 
     neuronsElems.insert({network.inputs.at(0),
@@ -357,51 +426,6 @@ int main() {
             {n, {.type = NeuronType::Normal, .point = sf::CircleShape()}});
     }
 
-    // {
-    //     for (size_t k = 0; k < 10; k++) {
-    //         for (size_t j = 0; j < neurons.size(); j++) {
-    //             neurons.at(j)->reset();
-    //         }
-    //         for (size_t j = 0; j < inputs.size(); j++) {
-    //             inputs.at(j)->reset();
-    //         }
-    //         for (size_t j = 0; j < outputs.size(); j++) {
-    //             outputs.at(j)->reset();
-    //         }
-
-    //         for (size_t i = 0; i < 100; i++) {
-    //             std::set<Neuron *> visited = {};
-    //             std::set<Neuron *> children = {};
-    //             for (size_t j = 0; j < inputs.size(); j++) {
-    //                 double data[] = {dataInput.at(k) / 10.0};
-    //                 inputs.at(j)->setValues(Eigen::Map<Matrix>(data, 1,
-    //                 1)); children.insert(inputs.at(j));
-    //             }
-    //             for (size_t j = 0; j < outputs.size(); j++) {
-    //                 outputs.at(j)->isInput = false;
-    //             }
-
-    //             while (children.size() > 0) {
-    //                 auto child = *children.begin();
-    //                 visited.insert(child);
-    //                 child->recalcActivity();
-    //                 for (auto &c : child->outgoing) {
-    //                     if (visited.find(c.first) == visited.end()) {
-    //                         children.insert(c.first);
-    //                     }
-    //                 }
-    //                 children.erase(child);
-    //             }
-    //         }
-    //         const double res = outputs.at(0)->getActivity().sum() /
-    //                            outputs.at(0)->getActivity().size();
-    //         std::cout << "result: " << res << ",  " << dataInput.at(k) <<
-    //         ",
-    //         "
-    //                   << (res < 0.5 ? 0 : 1) << ", " << totalError <<
-    //                   "\n";
-    //     }
-    // }
     sf::RenderWindow window(sf::VideoMode(1280, 720), "SFML + ImGui");
     window.setFramerateLimit(60);
 
@@ -424,6 +448,9 @@ int main() {
     std::mt19937 gen(rd());
     std::uniform_real_distribution<> dis(-1.0, 1.0);
 
+    std::vector<double> errorQueue = {};
+    std::vector<double> errorX = {};
+
     while (window.isOpen()) {
         deltaClock.restart();
         float deltaTime = deltaClock.getElapsedTime().asSeconds();
@@ -436,14 +463,14 @@ int main() {
 
         ImGui::SFML::Update(window, deltaClock.restart());
 
-        // Your ImGui UI
-        ImGui::Begin("Hello");
-        // for (size_t i = 0; i < inputs.size(); i++) {
+        ImPlot::CreateContext();
 
-        // ImGui::Text(inputs.at(i)->name+(inputs.at()));
-        // }
-        ImGui::Text("SFML");
-        ImGui::End();
+        if (ImPlot::BeginPlot("Total Error")) {
+            ImPlot::SetupAxes("X", "Y");
+            ImPlot::PlotLine("Error", errorX.data(), errorQueue.data(),
+                             errorX.size());
+            ImPlot::EndPlot();
+        }
 
         window.clear();
         if (updateClock.getElapsedTime().asSeconds() >= 0.100) {
@@ -482,7 +509,7 @@ int main() {
             float dx = n.point.getPosition().x - window.getSize().x / 2.f;
             float dy = n.point.getPosition().y - window.getSize().y / 2.f;
 
-            float angle = std::atan2(-dy, -dx); // radians
+            float angle = std::atan2(-dy, -dx);
             float speed = 0.4f;
             n.point.move(std::cos(angle) * speed, std::sin(angle) * speed);
             for (auto &[_, n2] : neuronsElems) {
@@ -495,15 +522,13 @@ int main() {
                     dy = dis(gen);
                 }
                 if (dist < pointSize * 4) {
-
-                    // Normalize (unit vector in the direction from n2 → n)
-                    float angle = std::atan2(dy, dx); // radians
+                    float angle = std::atan2(dy, dx);
                     float speed = 1.f;
                     n.point.move(std::cos(angle) * speed,
                                  std::sin(angle) * speed);
 
                 } else {
-                    float angle = std::atan2(-dy, -dx); // radians
+                    float angle = std::atan2(-dy, -dx);
                     float speed = 0.f;
                     n.point.move(std::cos(angle) * speed,
                                  std::sin(angle) * speed);
@@ -512,8 +537,8 @@ int main() {
         }
         drawLine(window, sf::Vector2f(100, 100), sf::Vector2f(100, 200), 10,
                  sf::Color::Blue);
-        // Draw your SFML stuff here
-        ImGui::SFML::Render(window); // Render ImGui on top
+
+        ImGui::SFML::Render(window);
         window.display();
     }
 

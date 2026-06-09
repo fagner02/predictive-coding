@@ -37,16 +37,32 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        v1.91.0
 )
+FetchContent_Declare(
+    implot
+    GIT_REPOSITORY https://github.com/epezent/implot.git
+    GIT_TAG v1.0
+)
+
 
 FetchContent_MakeAvailable(ImGui)
-set(IMGUI_DIR ${imgui_SOURCE_DIR} CACHE PATH "ImGui source directory" FORCE)
 
 FetchContent_MakeAvailable(ImGui-SFML)
+
+FetchContent_MakeAvailable(implot)
+add_library(implot INTERFACE)
+target_sources(implot INTERFACE
+    ${implot_SOURCE_DIR}/implot.cpp
+    ${implot_SOURCE_DIR}/implot_items.cpp
+)
+target_include_directories(implot INTERFACE ${implot_SOURCE_DIR})
+target_link_libraries(implot INTERFACE ImGui-SFML::ImGui-SFML)
+
 target_link_libraries(predictive_code PRIVATE
 OpenGL::GL
 glfw
 GLEW::GLEW
 Eigen3::Eigen
+implot
 ImGui-SFML::ImGui-SFML
 )
 

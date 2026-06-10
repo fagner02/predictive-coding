@@ -1,4 +1,3 @@
-#include "imgui_internal.h"
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -131,8 +130,7 @@ class Neuron {
         Mat ta = sigmoid(
             this->activity.cwiseProduct(connection->actual.activityWeights));
 
-        const auto res =
-            ta.cwiseProduct(neuron->error).cwiseProduct(neuron->prediction);
+        const auto res = ta.cwiseProduct(neuron->error);
 
         connection->value += res.sum() * 0.1;
         connection->value =
@@ -158,18 +156,15 @@ class Neuron {
             this->activity += delta;
         }
     }
-    RecalcResponse update() {
-        recalcPrediction();
-        const Mat oldError = this->error;
-        recalcError();
-        const Mat newError = this->error;
-        recalcActivity();
+
+    void recalcPossibleConnections() {
         std::vector<Neuron *> toErase = {};
         for (auto &[neuron, posCon] : possibleConnections) {
 
             recalcConnectionValue(neuron, posCon);
 
-            if (posCon->value > 2) {
+            // std::cout
+            if ((posCon->value) > 0) {
                 toErase.push_back(neuron);
                 neuron->incoming.insert({this, new Connection(*posCon)});
                 outgoing.insert(
@@ -180,6 +175,15 @@ class Neuron {
         for (auto neuron : toErase) {
             possibleConnections.erase(neuron);
         }
+    }
+
+    RecalcResponse update() {
+        recalcPrediction();
+        const Mat oldError = this->error;
+        recalcError();
+        const Mat newError = this->error;
+        recalcActivity();
+        recalcPossibleConnections();
         return {oldError, newError};
     }
 
@@ -197,10 +201,10 @@ class Neuron {
 };
 
 std::vector<double> dataInput = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-std::vector<double> dataOutput = {1, 0, 1, 0, 1, 0, 1, 0, 1, 0};
-//  std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
-//  std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 1, 1, 1, 1};
-//  std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
+// std::vector<double> dataOutput = {1, 0, 1, 0, 1, 0, 1, 0, 1, 0};
+// std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
+std::vector<double> dataOutput = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+// std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
 
 const size_t indexes[] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
 class Network {
@@ -273,7 +277,7 @@ class Network {
         if (inferenceIndex == maxInference) {
             return true;
         }
-        std::set<Neuron *> visited = {};
+        std::set<Neuron *> notVisited(all.begin(), all.end());
         std::set<Neuron *> children = {};
         double output1[] = {dataOutput.at(index)};
         for (size_t k = 0; k < inputs.size(); k++) {
@@ -290,18 +294,22 @@ class Network {
         children.insert(outputs.at(0));
         while (children.size() > 0) {
             auto child = *children.begin();
-            visited.insert(child);
+            notVisited.erase(child);
 
             const auto errors = child->update();
             totalError -= errors.oldError.sum();
             totalError += errors.newError.sum();
 
             for (auto &c : child->outgoing) {
-                if (visited.find(c.first) == visited.end()) {
+                if (notVisited.find(c.first) != notVisited.end()) {
                     children.insert(c.first);
                 }
             }
             children.erase(child);
+        }
+        for (auto child = notVisited.begin(); child != notVisited.end();
+             child++) {
+            (*child)->recalcPossibleConnections();
         }
 
         if ((abs(totalError)) <= 0.0001 || abs(lastError - totalError) <= 0.0) {
@@ -377,7 +385,7 @@ class Network {
                 }
                 for (auto child = notVisited.begin(); child != notVisited.end();
                      child++) {
-                    (*child)->update();
+                    (*child)->recalcPossibleConnections();
                 }
             }
             const double res = outputs.at(0)->getActivity().sum();
@@ -464,8 +472,6 @@ int main() {
         BeginDrawing();
         rlImGuiBegin();
         if (ImGui::IsMouseDown(MOUSE_LEFT_BUTTON)) {
-            std::cout << "mouse down="
-                      << (selected == nullptr ? "" : selected->name) << "\n";
             if (isMouseDown && selected != nullptr) {
                 auto &n = neuronsElems.at(selected);
                 n.pos = GetMousePosition();
@@ -490,7 +496,8 @@ int main() {
 
         if (ImPlot::BeginPlot("Total Error", {-1, 200})) {
             ImPlot::SetupAxes("X", "Y");
-            ImPlot::SetupAxesLimits(0, 20, -40, 40);
+            ImPlot::SetupAxesLimits(0, 20, -maxError * 1.2, maxError * 1.2,
+                                    ImPlotCond_Always);
             ImPlot::PlotLine("Error", errorX.data(), errorQueue.data(),
                              errorX.size());
             ImPlot::EndPlot();
@@ -534,7 +541,7 @@ int main() {
             for (auto [n2, c] : p->outgoing) {
                 auto p = neuronsElems.at(n2);
                 Vector2 pos2 = {p.pos.x, p.pos.y};
-                Color m = GREEN;
+                Color m = c.incoming->value < 0 ? BLUE : GREEN;
                 double width = abs(c.incoming->value);
                 m.a = 100;
                 drawLine(pos1, pos2, width, width, m);
@@ -569,11 +576,6 @@ int main() {
                     float speed = 1.f;
                     n.pos = {n.pos.x + std::cos(angle) * speed,
                              n.pos.y + std::sin(angle) * speed};
-                } else {
-                    // float angle = std::atan2(-dy, -dx);
-                    // float speed = 0.f;
-                    // n.point.move(
-                    //     {std::cos(angle) * speed, std::sin(angle) * speed});
                 }
             }
         }

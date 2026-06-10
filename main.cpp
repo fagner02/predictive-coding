@@ -340,6 +340,11 @@ class Network {
         for (auto &n : all) {
             n->reset();
         }
+        for (size_t k = 0; k < biases.size(); k++) {
+            Mat d(1, 1);
+            d(0, 0) = 1.f;
+            biases.at(k)->setValues(d);
+        }
         double currentError = totalError;
 
         totalError = inputs.size() + outputs.size() + neurons.size();

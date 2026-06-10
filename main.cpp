@@ -467,17 +467,41 @@ int main() {
 
     Neuron *selected;
     bool isMouseDown = false;
-
+    bool paused = true;
     while (!WindowShouldClose()) {
         BeginDrawing();
         rlImGuiBegin();
-        if (ImGui::IsMouseDown(MOUSE_LEFT_BUTTON)) {
+        const bool input = ImGui::GetIO().WantCaptureMouse;
+
+        if (ImPlot::BeginPlot("Total Error", {-1, 200})) {
+            ImPlot::SetupAxes("X", "Y");
+            ImPlot::SetupAxesLimits(0, 20, -maxError * 1.2, maxError * 1.2,
+                                    ImPlotCond_Always);
+            ImPlot::PlotLine("Error", errorX.data(), errorQueue.data(),
+                             errorX.size());
+            ImPlot::EndPlot();
+        }
+        if (ImGui::Button(paused ? "go" : "stop", {50, 30})) {
+            paused = !paused;
+        }
+
+        ImGui::Begin("Info");
+        if (selected != nullptr) {
+            ImGui::Text("Neuron %s", selected->name.c_str());
+            ImGui::Text("Activity: %f", selected->getActivity().sum());
+            ImGui::Text("Prediction: %f", selected->getPrediction().sum());
+            ImGui::Text("Error: %f", selected->getError().sum());
+        }
+        ImGui::End();
+
+        if (!input && ImGui::IsMouseDown(MOUSE_LEFT_BUTTON)) {
             if (isMouseDown && selected != nullptr) {
                 auto &n = neuronsElems.at(selected);
                 n.pos = GetMousePosition();
             }
         }
-        if (ImGui::IsMouseClicked(MOUSE_LEFT_BUTTON, ImGuiInputFlags_None)) {
+        if (!input &&
+            ImGui::IsMouseClicked(MOUSE_LEFT_BUTTON, ImGuiInputFlags_None)) {
             const auto pos = ImGui::GetMousePos();
             Neuron *newSelected = nullptr;
             for (auto &[p, n] : neuronsElems) {
@@ -490,7 +514,7 @@ int main() {
             selected = newSelected;
             isMouseDown = true;
         }
-        if (ImGui::IsMouseReleased(MOUSE_BUTTON_LEFT)) {
+        if (!input && ImGui::IsMouseReleased(MOUSE_BUTTON_LEFT)) {
             isMouseDown = false;
         }
 
@@ -504,6 +528,7 @@ int main() {
         }
 
         ClearBackground(BLACK);
+        if (!paused) {
         for (size_t k = 0; k < 10; k++) {
             const double error = network.update();
             if (errorQueue.size() == 20) {
@@ -518,7 +543,7 @@ int main() {
                 std::iota(errorX.begin(), errorX.end(), 0);
             }
         }
-
+        }
         for (auto &[p, n] : neuronsElems) {
             if (selected != nullptr && p != selected) {
                 continue;

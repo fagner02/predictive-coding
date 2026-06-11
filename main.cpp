@@ -6,7 +6,6 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <implot.h>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -82,7 +81,6 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
 
         activity = Mat::Zero(rows, cols);
         prediction = Mat::Ones(rows, cols);
-        error = Mat::Ones(rows, cols);
     }
 
     void setValues(Mat activity) {
@@ -97,13 +95,7 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
                       (this->sd).cwiseProduct(neuron->activity)) *
                   1));
             connection->actual.activityWeights =
-                connection->actual.activityWeights.cwiseMax(-10).cwiseMin(10);
-            if (this->name == "output") {
-                std::cout << std::fixed << std::setprecision(4)
-                          << "target=" << this->activity
-                          << " pred=" << this->prediction
-                          << " err=" << this->error << "\n";
-            }
+                connection->actual.activityWeights.cwiseMax(-1).cwiseMin(1);
         }
     }
 
@@ -112,11 +104,9 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
         return this->possibleConnections;
     }
 
-    void addPossibleConnection(std::shared_ptr<Neuron> neuron) {
+    void addConnection(std::shared_ptr<Neuron> neuron) {
         const auto &rows = neuron->activity.rows();
         const auto &cols = neuron->activity.cols();
-        const double ratio =
-            1.0 / (this->activity.rows() * this->activity.cols());
         const auto newConnection = ProtoConnection{
             .activityWeights = Mat::Random(rows, cols) * 0.1,
         };
@@ -125,8 +115,8 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
                 .actual = newConnection,
                 .value = 0,
             });
-        // this -> neuron
-        possibleConnections.insert({neuron, newPossibleConnection});
+        outgoing.insert({neuron, {.incoming = newPossibleConnection}});
+        neuron->incoming.insert({shared_from_this(), newPossibleConnection});
     }
 
     Mat sigmoidDerivative(Mat m) {
@@ -136,25 +126,6 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     }
 
     Mat sigmoid(Mat m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
-
-    void recalcConnectionValue(std::shared_ptr<Neuron> neuron,
-                               std::shared_ptr<Connection> connection) {
-        Mat ta = sigmoid(
-            this->activity.cwiseProduct(connection->actual.activityWeights));
-
-        const auto p =
-            sigmoid(neuron->z + this->activity.cwiseProduct(
-                                    connection->actual.activityWeights) *
-                                    connection->value);
-
-        const auto res = ta.cwiseProduct(neuron->activity - p);
-
-        connection->value += res.sum() * 0.1;
-        connection->value =
-            connection->value > connectionValueLimit    ? connectionValueLimit
-            : connection->value < -connectionValueLimit ? -connectionValueLimit
-                                                        : connection->value;
-    }
 
     void recalcActivity() {
         if (!isInput) {
@@ -169,38 +140,8 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
 
                 delta += thisWeights.cwiseProduct(
                     neuron->error.cwiseProduct(neuron->sd));
-
-                recalcConnectionValue(neuron, connection.incoming);
-
-                if (abs(connection.incoming->value) < 0) {
-                    // toErase.push_back(neuron);
-                }
             }
             this->activity += delta * 1;
-            for (auto &n : toErase) {
-                const auto c = outgoing.at(n).incoming;
-                possibleConnections.insert({n, c});
-                outgoing.erase(n);
-            }
-        }
-    }
-
-    void recalcPossibleConnections() {
-        std::vector<std::shared_ptr<Neuron>> toErase = {};
-        for (auto &[neuron, posCon] : possibleConnections) {
-
-            recalcConnectionValue(neuron, posCon);
-
-            if (abs(posCon->value) > 0) {
-                toErase.push_back(neuron);
-                neuron->incoming.insert({shared_from_this(), posCon});
-                outgoing.insert(
-                    {neuron, OutgoingConnection{.incoming = neuron->incoming.at(
-                                                    shared_from_this())}});
-            }
-        }
-        for (auto neuron : toErase) {
-            possibleConnections.erase(neuron);
         }
     }
 
@@ -210,7 +151,6 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
         recalcError();
         const Mat newError = this->error;
         recalcActivity();
-        recalcPossibleConnections();
         return {oldError, newError};
     }
 
@@ -230,9 +170,9 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
 
 const size_t xorIndexes[] = {1, 0, 3, 2, 0, 3, 1, 2, 3, 0, 2, 1};
 Mat xorInputSetup(size_t neuronIndex, size_t dataIndex) {
-    std::vector<double> dataInputA = {0, 0, 1, 1}; // First bit
-    std::vector<double> dataInputB = {0, 1, 0, 1}; // Second bit
-    const size_t index = dataIndex % 4;
+    std::vector<double> dataInputA = {0, 0, 1, 1};
+    std::vector<double> dataInputB = {0, 1, 0, 1};
+    const size_t index = xorIndexes[dataIndex % 12];
 
     Mat d(1, 1);
     d(0, 0) = neuronIndex ? dataInputA[index] : dataInputB[index];
@@ -249,7 +189,7 @@ struct Input {
 Input xorInput{.inputSetup = xorInputSetup,
                .outputSetup =
                    [](size_t neuronIndex, size_t dataIndex) {
-                       const size_t index = dataIndex % 4;
+                       const size_t index = xorIndexes[dataIndex % 12];
 
                        std::vector<double> dataOutput = {0, 1, 1, 0};
                        Mat d(1, 1);
@@ -300,8 +240,8 @@ class Network {
     size_t cycleIndex = 0;
     size_t inferenceIndex = 0;
 
-    size_t maxCycle = 220;
-    size_t maxInference = 500;
+    size_t maxCycle = 320;
+    size_t maxInference = 200;
 
     double totalError;
     double lastError = 0;
@@ -337,20 +277,20 @@ class Network {
                 if (i == j) {
                     continue;
                 }
-                neurons.at(i)->addPossibleConnection(neurons.at(j));
-                neurons.at(j)->addPossibleConnection(neurons.at(i));
+                neurons.at(i)->addConnection(neurons.at(j));
+                neurons.at(j)->addConnection(neurons.at(i));
             }
             for (size_t j = 0; j < inputs.size(); j++) {
-                inputs.at(j)->addPossibleConnection(neurons.at(i));
-                neurons.at(i)->addPossibleConnection(inputs.at(j));
+                inputs.at(j)->addConnection(neurons.at(i));
+                neurons.at(i)->addConnection(inputs.at(j));
             }
             for (size_t j = 0; j < outputs.size(); j++) {
-                outputs.at(j)->addPossibleConnection(neurons.at(i));
-                neurons.at(i)->addPossibleConnection(outputs.at(j));
+                outputs.at(j)->addConnection(neurons.at(i));
+                neurons.at(i)->addConnection(outputs.at(j));
             }
             for (size_t j = 0; j < biases.size(); j++) {
-                biases.at(j)->addPossibleConnection(neurons.at(i));
-                neurons.at(i)->addPossibleConnection(biases.at(j));
+                biases.at(j)->addConnection(neurons.at(i));
+                neurons.at(i)->addConnection(biases.at(j));
             }
         }
         all.insert(all.end(), neurons.begin(), neurons.end());
@@ -365,41 +305,42 @@ class Network {
         if (inferenceIndex == maxInference) {
             return true;
         }
-
-        std::set<std::shared_ptr<Neuron>> notVisited(all.begin(), all.end());
-        std::set<std::shared_ptr<Neuron>> children = {};
-
-        for (auto &n : all) {
-            n->recalcPrediction();
-        }
+        std::vector<std::shared_ptr<Neuron>> allInputs(inputs.begin(),
+                                                       inputs.end());
+        allInputs.insert(allInputs.end(), outputs.begin(), outputs.end());
         for (size_t k = 0; k < inputs.size(); k++) {
             inputs.at(k)->setValues(input.inputSetup(k, index));
-            children.insert(inputs.at(k));
         }
         for (size_t k = 0; k < outputs.size(); k++) {
             outputs.at(k)->setValues(input.outputSetup(k, index));
-            children.insert(outputs.at(k));
         }
-        while (children.size() > 0) {
-            auto child = *children.begin();
-            notVisited.erase(child);
+        for (auto &n : all) {
+            n->recalcPrediction();
+            totalError -= n->getError().cwiseAbs().sum();
+            n->recalcError();
+            totalError += n->getError().cwiseAbs().sum();
+        }
+        for (auto &inputNeuron : allInputs) {
 
-            const auto errors = child->update();
-            totalError -= errors.oldError.sum();
-            totalError += errors.newError.sum();
+            std::set<std::shared_ptr<Neuron>> visited(all.begin(), all.end());
+            std::set<std::shared_ptr<Neuron>> children = {inputNeuron};
 
-            for (auto &c : child->outgoing) {
-                if (notVisited.find(c.first) != notVisited.end()) {
-                    children.insert(c.first);
+            while (children.size() > 0) {
+                auto child = *children.begin();
+                visited.insert(child);
+
+                const auto errors = child->update();
+                totalError -= errors.oldError.cwiseAbs().sum();
+                totalError += errors.newError.cwiseAbs().sum();
+
+                for (auto &c : child->outgoing) {
+                    if (visited.find(c.first) == visited.end()) {
+                        children.insert(c.first);
+                    }
                 }
+                children.erase(child);
             }
-            children.erase(child);
         }
-        for (auto child = notVisited.begin(); child != notVisited.end();
-             child++) {
-            (*child)->recalcPossibleConnections();
-        }
-
         if ((abs(totalError)) <= 0.0001 || abs(lastError - totalError) <= 0.0) {
             return true;
         }
@@ -422,20 +363,21 @@ class Network {
         }
         inferenceIndex = 0;
 
+        double currentError = totalError;
+        totalError = 0;
         for (auto &n : all) {
             n->recalcWeights();
         }
         for (auto &n : all) {
             n->reset();
+            totalError = n->getError().cwiseAbs().sum();
         }
         for (size_t k = 0; k < biases.size(); k++) {
             Mat d(1, 1);
             d(0, 0) = 1.f;
             biases.at(k)->setValues(d);
         }
-        double currentError = totalError;
 
-        totalError = inputs.size() + outputs.size() + neurons.size();
         lastError = 0;
         cycleIndex++;
         return currentError;
@@ -443,37 +385,49 @@ class Network {
 
     void test() {
         for (size_t k = 0; k < 4; k++) {
+            totalError = 0;
             for (auto &n : all) {
                 n->reset();
+                totalError = n->getError().cwiseAbs().sum();
             }
 
-            for (size_t i = 0; i < maxInference; i++) {
+            for (size_t k = 0; k < biases.size(); k++) {
+                Mat d(1, 1);
+                d(0, 0) = 1.f;
+                biases.at(k)->setValues(d);
+            }
 
-                std::set<std::shared_ptr<Neuron>> notVisited =
-                    std::set<std::shared_ptr<Neuron>>(all.begin(), all.end());
-                std::set<std::shared_ptr<Neuron>> children = {};
-                for (size_t j = 0; j < inputs.size(); j++) {
-                    inputs.at(j)->setValues(input.inputSetup(j, k));
-                    children.insert(inputs.at(j));
-                }
-                for (size_t j = 0; j < outputs.size(); j++) {
-                    outputs.at(j)->isInput = false;
-                }
+            for (size_t j = 0; j < inputs.size(); j++) {
+                inputs.at(j)->setValues(input.inputSetup(j, k));
+            }
+            for (size_t j = 0; j < outputs.size(); j++) {
+                outputs.at(j)->isInput = false;
+            }
+            std::vector<std::shared_ptr<Neuron>> allInputs(inputs.begin(),
+                                                           inputs.end());
+            allInputs.insert(allInputs.end(), outputs.begin(), outputs.end());
+            for (auto &inputNeuron : allInputs) {
+                for (size_t i = 0; i < 1000; i++) {
+                    std::set<std::shared_ptr<Neuron>> visited =
+                        std::set<std::shared_ptr<Neuron>>(all.begin(),
+                                                          all.end());
+                    std::set<std::shared_ptr<Neuron>> children = {};
 
-                while (children.size() > 0) {
-                    auto child = *children.begin();
-                    notVisited.erase(child);
-                    child->update();
-                    for (auto &c : child->outgoing) {
-                        if (notVisited.find(c.first) != notVisited.end()) {
-                            children.insert(c.first);
+                    children.insert(inputNeuron);
+                    while (children.size() > 0) {
+                        auto child = *children.begin();
+                        visited.insert(child);
+                        const auto errors = child->update();
+
+                        totalError -= errors.oldError.cwiseAbs().sum();
+                        totalError += errors.newError.cwiseAbs().sum();
+                        for (auto &c : child->outgoing) {
+                            if (visited.find(c.first) == visited.end()) {
+                                children.insert(c.first);
+                            }
                         }
+                        children.erase(child);
                     }
-                    children.erase(child);
-                }
-                for (auto child = notVisited.begin(); child != notVisited.end();
-                     child++) {
-                    (*child)->recalcPossibleConnections();
                 }
             }
             const double res = outputs.at(0)->getPrediction().sum();
@@ -554,8 +508,10 @@ int main() {
     double maxError = 0;
 
     std::shared_ptr<Neuron> selected;
-    bool isMouseDown = false;
     bool paused = true;
+    bool isMouseDown = false;
+    bool showOutgoing = true;
+    bool showIncoming = false;
     while (!WindowShouldClose()) {
         BeginDrawing();
         rlImGuiBegin();
@@ -572,13 +528,15 @@ int main() {
         if (ImGui::Button(paused ? "go" : "stop", {50, 30})) {
             paused = !paused;
         }
+        ImGui::Checkbox("Show Outgoing", &showOutgoing);
+        ImGui::Checkbox("Show Incoming", &showIncoming);
 
         ImGui::Begin("Info");
         if (selected != nullptr) {
             ImGui::Text("Neuron %s", selected->name.c_str());
             ImGui::Text("Activity: %f", selected->getActivity().sum());
             ImGui::Text("Prediction: %f", selected->getPrediction().sum());
-            ImGui::Text("Error: %f", selected->getError().sum());
+            ImGui::Text("Error: %f", (selected->getError().cwiseAbs()).sum());
         }
         ImGui::End();
 
@@ -635,14 +593,28 @@ int main() {
                 m.a = 100;
                 drawLine(pos1, pos2, width, width, m);
             }
-            for (auto [n2, c] : p->outgoing) {
-                auto p = neuronsElems.at(n2);
-                Vector2 pos2 = {p.pos.x, p.pos.y};
-                Color m = c.incoming->value < 0 ? BLUE : GREEN;
-                double width = abs(c.incoming->value);
-                m.a = 100;
-                drawLine(pos1, pos2, width, width, m);
-            }
+            if (showOutgoing)
+                for (auto [n2, c] : p->outgoing) {
+                    auto p = neuronsElems.at(n2);
+                    Vector2 pos2 = {p.pos.x, p.pos.y};
+                    Color m = c.incoming->actual.activityWeights.sum() < 0
+                                  ? BLUE
+                                  : GREEN;
+                    double width =
+                        abs(c.incoming->actual.activityWeights.sum()) * 4;
+                    m.a = 100;
+                    drawLine(pos1, pos2, width, width, m);
+                }
+            if (showIncoming)
+                for (auto [n2, c] : p->incoming) {
+                    auto p = neuronsElems.at(n2);
+                    Vector2 pos2 = {p.pos.x, p.pos.y};
+                    Color m =
+                        c->actual.activityWeights.sum() < 0 ? BLUE : GREEN;
+                    double width = abs(c->actual.activityWeights.sum()) * 4;
+                    m.a = 100;
+                    drawLine(pos1, pos2, width, width, m);
+                }
         }
         for (auto &[p, n] : neuronsElems) {
             if (p == selected) {
@@ -681,6 +653,7 @@ int main() {
         EndDrawing();
     }
 
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
     rlImGuiShutdown();
     CloseWindow();

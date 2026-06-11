@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <raylib.h>
@@ -35,7 +36,7 @@ struct Connection {
 };
 
 struct OutgoingConnection {
-    Connection *incoming;
+    std::shared_ptr<Connection> incoming;
 };
 
 const double connectionValueLimit = 5;
@@ -45,9 +46,10 @@ struct RecalcResponse {
     Mat newError;
 };
 
-class Neuron {
+class Neuron : public std::enable_shared_from_this<Neuron> {
   protected:
-    std::map<Neuron *, Connection *> possibleConnections;
+    std::map<std::shared_ptr<Neuron>, std::shared_ptr<Connection>>
+        possibleConnections;
     Mat activity;
     Mat prediction;
     Mat error;
@@ -56,8 +58,9 @@ class Neuron {
 
   public:
     bool isInput;
-    std::map<Neuron *, Connection *> incoming = {};
-    std::map<Neuron *, OutgoingConnection> outgoing = {};
+    std::map<std::shared_ptr<Neuron>, std::shared_ptr<Connection>> incoming =
+        {};
+    std::map<std::shared_ptr<Neuron>, OutgoingConnection> outgoing = {};
     std::string name;
 
     Neuron(size_t rows, size_t cols, bool isInput = false) {
@@ -104,11 +107,12 @@ class Neuron {
         }
     }
 
-    std::map<Neuron *, Connection *> getPossibleConnections() {
+    std::map<std::shared_ptr<Neuron>, std::shared_ptr<Connection>>
+    getPossibleConnections() {
         return this->possibleConnections;
     }
 
-    void addPossibleConnection(Neuron *neuron) {
+    void addPossibleConnection(std::shared_ptr<Neuron> neuron) {
         const auto &rows = neuron->activity.rows();
         const auto &cols = neuron->activity.cols();
         const double ratio =
@@ -116,10 +120,11 @@ class Neuron {
         const auto newConnection = ProtoConnection{
             .activityWeights = Mat::Random(rows, cols) * 0.1,
         };
-        Connection *newPossibleConnection = new Connection{
-            .actual = newConnection,
-            .value = 0,
-        };
+        std::shared_ptr<Connection> newPossibleConnection =
+            std::make_shared<Connection>(Connection{
+                .actual = newConnection,
+                .value = 0,
+            });
         // this -> neuron
         possibleConnections.insert({neuron, newPossibleConnection});
     }
@@ -132,7 +137,8 @@ class Neuron {
 
     Mat sigmoid(Mat m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
 
-    void recalcConnectionValue(Neuron *neuron, Connection *connection) {
+    void recalcConnectionValue(std::shared_ptr<Neuron> neuron,
+                               std::shared_ptr<Connection> connection) {
         Mat ta = sigmoid(
             this->activity.cwiseProduct(connection->actual.activityWeights));
 
@@ -155,7 +161,7 @@ class Neuron {
 
             Mat delta = -error;
 
-            std::vector<Neuron *> toErase = {};
+            std::vector<std::shared_ptr<Neuron>> toErase = {};
 
             for (const auto &[neuron, connection] : outgoing) {
                 const auto thisWeights =
@@ -180,18 +186,18 @@ class Neuron {
     }
 
     void recalcPossibleConnections() {
-        std::vector<Neuron *> toErase = {};
+        std::vector<std::shared_ptr<Neuron>> toErase = {};
         for (auto &[neuron, posCon] : possibleConnections) {
 
             recalcConnectionValue(neuron, posCon);
 
-            // if (abs(posCon->value) > 0) {
-            toErase.push_back(neuron);
-            neuron->incoming.insert({this, new Connection(*posCon)});
-            outgoing.insert(
-                {neuron,
-                 OutgoingConnection{.incoming = neuron->incoming.at(this)}});
-            //}
+            if (abs(posCon->value) > 0) {
+                toErase.push_back(neuron);
+                neuron->incoming.insert({shared_from_this(), posCon});
+                outgoing.insert(
+                    {neuron, OutgoingConnection{.incoming = neuron->incoming.at(
+                                                    shared_from_this())}});
+            }
         }
         for (auto neuron : toErase) {
             possibleConnections.erase(neuron);
@@ -283,11 +289,11 @@ Input simpleInput{
 const size_t indexes[] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
 class Network {
   public:
-    std::vector<Neuron *> inputs = {};
-    std::vector<Neuron *> outputs = {};
-    std::vector<Neuron *> neurons = {};
-    std::vector<Neuron *> biases = {};
-    std::vector<Neuron *> all;
+    std::vector<std::shared_ptr<Neuron>> inputs = {};
+    std::vector<std::shared_ptr<Neuron>> outputs = {};
+    std::vector<std::shared_ptr<Neuron>> neurons = {};
+    std::vector<std::shared_ptr<Neuron>> biases = {};
+    std::vector<std::shared_ptr<Neuron>> all;
 
     Input input;
 
@@ -303,12 +309,12 @@ class Network {
     Network(Input input) {
         this->input = input;
         for (size_t k = 0; k < input.inputSize; k++) {
-            const auto n = new Neuron(1, 1, true);
+            const auto n = std::make_shared<Neuron>(1, 1, true);
             inputs.push_back(n);
             n->name = "input";
         }
         for (size_t k = 0; k < 2; k++) {
-            const auto n = new Neuron(1, 1, true);
+            const auto n = std::make_shared<Neuron>(1, 1, true);
             biases.push_back(n);
             Mat d(1, 1);
             d(0, 0) = 1.f;
@@ -316,14 +322,15 @@ class Network {
             n->name = "bias";
         }
         for (size_t k = 0; k < input.outputSize; k++) {
-            const auto n = new Neuron(1, 1, true);
+            const auto n = std::make_shared<Neuron>(1, 1, true);
             outputs.push_back(n);
             n->name = "output";
         }
 
         for (size_t i = 0; i < 20; i++) {
-            neurons.push_back(new Neuron(1, 1));
-            neurons.at(neurons.size() - 1)->name = "n" + std::to_string(i);
+            const auto n = std::make_shared<Neuron>(1, 1);
+            n->name = "n" + std::to_string(i);
+            neurons.push_back(n);
         }
         for (size_t i = 0; i < neurons.size(); i++) {
             for (size_t j = 0; j < neurons.size(); j++) {
@@ -358,8 +365,10 @@ class Network {
         if (inferenceIndex == maxInference) {
             return true;
         }
-        std::set<Neuron *> notVisited(all.begin(), all.end());
-        std::set<Neuron *> children = {};
+
+        std::set<std::shared_ptr<Neuron>> notVisited(all.begin(), all.end());
+        std::set<std::shared_ptr<Neuron>> children = {};
+
         for (auto &n : all) {
             n->recalcPrediction();
         }
@@ -439,9 +448,10 @@ class Network {
             }
 
             for (size_t i = 0; i < maxInference; i++) {
-                std::set<Neuron *> notVisited =
-                    std::set<Neuron *>(all.begin(), all.end());
-                std::set<Neuron *> children = {};
+
+                std::set<std::shared_ptr<Neuron>> notVisited =
+                    std::set<std::shared_ptr<Neuron>>(all.begin(), all.end());
+                std::set<std::shared_ptr<Neuron>> children = {};
                 for (size_t j = 0; j < inputs.size(); j++) {
                     inputs.at(j)->setValues(input.inputSetup(j, k));
                     children.insert(inputs.at(j));
@@ -503,7 +513,7 @@ int main() {
 
     Network network = Network(xorInput);
 
-    std::map<Neuron *, NeuronObject> neuronsElems;
+    std::map<std::shared_ptr<Neuron>, NeuronObject> neuronsElems;
 
     for (auto &n : network.outputs) {
         neuronsElems.insert({n, {.type = NeuronType::Output}});
@@ -543,7 +553,7 @@ int main() {
     std::vector<double> errorX = {};
     double maxError = 0;
 
-    Neuron *selected;
+    std::shared_ptr<Neuron> selected;
     bool isMouseDown = false;
     bool paused = true;
     while (!WindowShouldClose()) {
@@ -581,7 +591,7 @@ int main() {
         if (!input &&
             ImGui::IsMouseClicked(MOUSE_LEFT_BUTTON, ImGuiInputFlags_None)) {
             const auto pos = ImGui::GetMousePos();
-            Neuron *newSelected = nullptr;
+            std::shared_ptr<Neuron> newSelected = nullptr;
             for (auto &[p, n] : neuronsElems) {
                 auto d = Vector2{n.pos.x - pos.x, n.pos.y - pos.y};
                 auto dist = sqrt(pow(d.x, 2) + pow(d.y, 2));

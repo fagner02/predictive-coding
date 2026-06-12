@@ -625,8 +625,6 @@ int main() {
         EndDrawing();
     }
 
-    ImPlot::DestroyContext();
-    ImGui::DestroyContext();
     rlImGuiShutdown();
     CloseWindow();
     return 0;

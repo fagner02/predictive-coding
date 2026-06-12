@@ -38,8 +38,6 @@ struct OutgoingConnection {
     std::shared_ptr<Connection> incoming;
 };
 
-const double connectionValueLimit = 5;
-
 struct RecalcResponse {
     Mat oldError;
     Mat newError;
@@ -52,7 +50,6 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     Mat activity;
     Mat prediction;
     Mat error;
-    Mat z;
     Mat sd;
 
   public:
@@ -160,9 +157,8 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
             this->prediction += neuron->activity.cwiseProduct(
                 connection->actual.activityWeights);
         }
-        z = this->prediction;
-        sd = sigmoidDerivative(this->z);
-        this->prediction = sigmoid(this->z);
+        sd = sigmoidDerivative(this->prediction);
+        this->prediction = sigmoid(this->prediction);
     }
 
     void recalcError() { this->error = (activity - prediction); }

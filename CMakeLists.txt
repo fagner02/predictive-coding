@@ -19,7 +19,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include
 include(FetchContent)
 
 add_executable(predictive_code
-    main.cpp 
+    main.cpp
 )
 
 find_package(Eigen3 REQUIRED)
@@ -61,7 +61,7 @@ target_sources(imgui PRIVATE
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
 )
 
-target_include_directories(imgui PUBLIC 
+target_include_directories(imgui PUBLIC
 ${imgui_SOURCE_DIR}
 ${imgui_SOURCE_DIR}/backends
 ${rlimgui_SOURCE_DIR}
@@ -80,10 +80,7 @@ target_sources(implot INTERFACE
 target_include_directories(implot INTERFACE ${implot_SOURCE_DIR})
 target_link_libraries(implot INTERFACE imgui)
 
-
-
-
-target_sources(predictive_code PRIVATE 
+target_sources(predictive_code PRIVATE
     ${rlimgui_SOURCE_DIR}/rlImGui.cpp)
 
 target_link_libraries(predictive_code PRIVATE

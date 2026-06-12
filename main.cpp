@@ -527,7 +527,7 @@ int main() {
             ImGui::Text("Activity: %f", selected->getActivity().sum());
             ImGui::Text("Prediction: %f", selected->getPrediction().sum());
             ImGui::Text("Error: %f", (selected->getError().cwiseAbs()).sum());
-            ImGui::Checkbox("Show Repercution", &showRepercussion);
+            ImGui::Checkbox("Show Repercussion", &showRepercussion);
         } else {
             ImGui::Text("Click on a neuron to see its info");
         }

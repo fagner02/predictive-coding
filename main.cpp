@@ -38,6 +38,8 @@ struct RecalcResponse {
     Mat newError;
 };
 
+enum NeuronType { Output, Input, Normal, Hidden, Bias };
+
 class Neuron : public std::enable_shared_from_this<Neuron> {
   protected:
     Mat activity;
@@ -46,16 +48,19 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     Mat sd;
 
   public:
+    NeuronType type;
     bool isInput;
     std::map<neuron_ptr, conn_ptr> incoming = {};
     std::map<neuron_ptr, OutgoingConnection> outgoing = {};
     std::string name;
 
-    Neuron(size_t rows, size_t cols, bool isInput = false) {
-        activity = Mat::Zero(rows, cols);
-        prediction = Mat::Ones(rows, cols);
+    Neuron(size_t rows, size_t cols, bool isInput = false,
+           NeuronType type = NeuronType::Normal) {
+        activity = Mat::Random(rows, cols) * 0.1;
+        prediction = Mat::Random(rows, cols) * 0.1;
         error = Mat::Ones(rows, cols);
         this->isInput = isInput;
+        this->type = type;
     }
 
     Mat getActivity() { return this->activity; }
@@ -226,7 +231,7 @@ class Network {
     std::vector<neuron_ptr> biases = {};
     std::vector<neuron_ptr> all;
 
-    std::shared_ptr<Input> input;
+    std::shared_ptr<class Input> input;
 
     size_t cycleIndex = 0;
     size_t inferenceIndex = 0;
@@ -237,7 +242,7 @@ class Network {
     double totalError;
     double lastError = 0;
 
-    Network(std::shared_ptr<Input> _input) {
+    Network(std::shared_ptr<class Input> _input) {
         this->input = _input;
         for (size_t k = 0; k < input->inputSize; k++) {
             const auto n = std::make_shared<Neuron>(1, 1, true);
@@ -443,8 +448,6 @@ void drawLine(Vector2 start, Vector2 end, float widthStart, float widthEnd,
 
     DrawTriangleStrip(vertices, 4, color);
 }
-enum NeuronType { Output, Input, Normal, Hidden, Bias };
-
 struct NeuronObject {
     NeuronType type;
     Vector2 pos;

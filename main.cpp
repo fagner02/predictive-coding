@@ -1,7 +1,7 @@
+#include <Eigen/Dense>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
-#include <eigen3/Eigen/Dense>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <implot.h>
@@ -78,7 +78,7 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     }
 
     void setValues(Mat activity) {
-        this->prediction = activity;
+        //        this->prediction = activity;
         this->activity = activity;
     }
 
@@ -249,7 +249,19 @@ class Network {
             inputs.push_back(n);
             n->name = "input";
         }
-        for (size_t k = 0; k < 2; k++) {
+
+        for (size_t k = 0; k < input->outputSize; k++) {
+            const auto n = std::make_shared<Neuron>(1, 1, true);
+            outputs.push_back(n);
+            n->name = "output";
+        }
+
+        for (size_t i = 0; i < 2; i++) {
+            const auto n = std::make_shared<Neuron>(1, 1);
+            n->name = "n" + std::to_string(i);
+            neurons.push_back(n);
+        }
+        for (size_t k = 0; k < neurons.size(); k++) {
             const auto n = std::make_shared<Neuron>(1, 1, true);
             biases.push_back(n);
             Mat d(1, 1);
@@ -257,37 +269,24 @@ class Network {
             n->setValues(d);
             n->name = "bias";
         }
-        for (size_t k = 0; k < input->outputSize; k++) {
-            const auto n = std::make_shared<Neuron>(1, 1, true);
-            outputs.push_back(n);
-            n->name = "output";
-        }
-
-        for (size_t i = 0; i < 20; i++) {
-            const auto n = std::make_shared<Neuron>(1, 1);
-            n->name = "n" + std::to_string(i);
-            neurons.push_back(n);
-        }
         for (size_t i = 0; i < neurons.size(); i++) {
             for (size_t j = 0; j < neurons.size(); j++) {
                 if (i == j) {
                     continue;
                 }
-                neurons.at(i)->addConnection(neurons.at(j));
-                neurons.at(j)->addConnection(neurons.at(i));
+                // neurons.at(i)->addConnection(neurons.at(j));
+                // neurons.at(j)->addConnection(neurons.at(i));
             }
             for (size_t j = 0; j < inputs.size(); j++) {
                 inputs.at(j)->addConnection(neurons.at(i));
-                neurons.at(i)->addConnection(inputs.at(j));
+                // neurons.at(i)->addConnection(inputs.at(j));
             }
             for (size_t j = 0; j < outputs.size(); j++) {
-                outputs.at(j)->addConnection(neurons.at(i));
+                // outputs.at(j)->addConnection(neurons.at(i));
                 neurons.at(i)->addConnection(outputs.at(j));
             }
-            for (size_t j = 0; j < biases.size(); j++) {
-                biases.at(j)->addConnection(neurons.at(i));
-                neurons.at(i)->addConnection(biases.at(j));
-            }
+            biases.at(i)->addConnection(neurons.at(i));
+            // neurons.at(i)->addConnection(biases.at(j));
         }
         all.insert(all.end(), neurons.begin(), neurons.end());
         all.insert(all.end(), inputs.begin(), inputs.end());
@@ -301,8 +300,6 @@ class Network {
         if (inferenceIndex == maxInference) {
             return true;
         }
-        std::vector<neuron_ptr> allInputs(inputs.begin(), inputs.end());
-        allInputs.insert(allInputs.end(), outputs.begin(), outputs.end());
         for (size_t k = 0; k < inputs.size(); k++) {
             inputs.at(k)->setValues(input->inputSetup(k, index));
         }
@@ -316,26 +313,23 @@ class Network {
             totalError += n->getError().cwiseAbs().sum();
         }
 
-        for (const auto &inputNeuron : allInputs) {
+        std::set<neuron_ptr> visited(inputs.begin(), inputs.end());
+        std::set<neuron_ptr> children(inputs.begin(), inputs.end());
 
-            std::set<neuron_ptr> visited = {inputNeuron};
-            std::set<neuron_ptr> children = {inputNeuron};
-
-            while (children.size() > 0) {
-                std::set<neuron_ptr> newChildren;
-                for (const auto &child : children) {
-                    const auto errors = child->update();
-                    totalError -= errors.oldError.cwiseAbs().sum();
-                    totalError += errors.newError.cwiseAbs().sum();
-                    for (const auto &c : child->outgoing) {
-                        if (visited.find(c.first) == visited.end()) {
-                            visited.insert(c.first);
-                            newChildren.insert(c.first);
-                        }
+        while (children.size() > 0) {
+            std::set<neuron_ptr> newChildren;
+            for (const auto &child : children) {
+                const auto errors = child->update();
+                totalError -= errors.oldError.cwiseAbs().sum();
+                totalError += errors.newError.cwiseAbs().sum();
+                for (const auto &c : child->outgoing) {
+                    if (visited.find(c.first) == visited.end()) {
+                        visited.insert(c.first);
+                        newChildren.insert(c.first);
                     }
                 }
-                children = newChildren;
             }
+            children = newChildren;
         }
         if ((abs(totalError)) <= 0.0001 || abs(lastError - totalError) <= 0.0) {
             return true;

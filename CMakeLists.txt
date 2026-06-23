@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.30)
 
+set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libs" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_WAYLAND ON CACHE BOOL "GLFW use wayland" FORCE)
+set(GLFW_BUILD_X11 OFF CACHE BOOL "GLFW use x11" FORCE)
 set(USE_WAYLAND ON CACHE BOOL "" FORCE)
 set(USE_X11 OFF CACHE BOOL "" FORCE)
 
@@ -22,7 +26,6 @@ add_executable(predictive_code
     main.cpp
 )
 
-find_package(Eigen3 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED)
 
@@ -31,8 +34,14 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/raysan5/raylib.git
     GIT_TAG        6.0
 )
-
 FetchContent_MakeAvailable(raylib)
+
+FetchContent_Declare(
+    eigen3
+    GIT_REPOSITORY https://gitlab.com/libeigen/eigen
+    GIT_TAG 5.0.1
+)
+FetchContent_MakeAvailable(eigen3)
 
 FetchContent_Declare(
     rlimgui
@@ -87,7 +96,6 @@ target_link_libraries(predictive_code PRIVATE
 raylib
 OpenGL::GL
 GLEW::GLEW
-Eigen3::Eigen
 implot
 imgui
 )
@@ -96,4 +104,5 @@ target_include_directories(predictive_code PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}
     ${RAYLIB_INCLUDE_DIR}
+    ${eigen3_SOURCE_DIR}
 )

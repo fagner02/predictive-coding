@@ -2,13 +2,17 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <fstream>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <implot.h>
+#include <iomanip>
+#include <ios>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <numeric>
+#include <ostream>
 #include <random>
 #include <raylib.h>
 #include <rlImGui.h>
@@ -20,7 +24,7 @@
 typedef Eigen::MatrixXd Mat;
 class Neuron;
 
-bool paused = false;
+bool paused = true;
 
 struct Connection {
     Mat activityWeights;
@@ -73,21 +77,21 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
         size_t rows = activity.rows();
         size_t cols = activity.cols();
 
-        activity = Mat::Zero(rows, cols);
-        prediction = Mat::Ones(rows, cols);
+        activity = Mat::Random(rows, cols) * 0.1;
+        prediction = Mat::Random(rows, cols) * 0.1;
     }
 
-    void setValues(Mat activity) {
+    void setActivity(Mat activity) {
         //        this->prediction = activity;
         this->activity = activity;
     }
 
     void recalcWeights() {
         for (auto &[neuron, connection] : incoming) {
-            connection->activityWeights += this->error.cwiseProduct(
-                (this->sd).cwiseProduct(neuron->activity));
-            connection->activityWeights =
-                connection->activityWeights.cwiseMax(-1).cwiseMin(1);
+            connection->activityWeights +=
+                this->error.cwiseProduct(
+                    (this->sd).cwiseProduct(neuron->activity)) *
+                1;
         }
     }
 
@@ -111,20 +115,20 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     Mat sigmoid(Mat m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
 
     void recalcActivity() {
-        if (!isInput) {
-
-            Mat delta = -error;
-
-            std::vector<neuron_ptr> toErase = {};
-
-            for (const auto &[neuron, connection] : outgoing) {
-                const auto thisWeights = connection.incoming->activityWeights;
-
-                delta += thisWeights.cwiseProduct(
-                    neuron->error.cwiseProduct(neuron->sd));
-            }
-            this->activity += delta * 1;
+        if (isInput) {
+            return;
         }
+        Mat delta = -error;
+
+        std::vector<neuron_ptr> toErase = {};
+
+        for (const auto &[neuron, connection] : outgoing) {
+            const auto thisWeights = connection.incoming->activityWeights;
+
+            delta += thisWeights.cwiseProduct(
+                neuron->error.cwiseProduct(neuron->sd));
+        }
+        this->activity += delta * 0.1;
     }
 
     RecalcResponse update() {
@@ -236,11 +240,41 @@ class Network {
     size_t cycleIndex = 0;
     size_t inferenceIndex = 0;
 
-    size_t maxCycle = 320;
+    size_t maxCycle = 120;
     size_t maxInference = 200;
 
     double totalError;
     double lastError = 0;
+    void save(char *filename) {
+        std::ofstream file(filename);
+        for (auto &n : neurons) {
+            for (auto &[n2, c] : n->incoming) {
+                file << c->activityWeights(0, 0) << "\n";
+            }
+        }
+        for (auto &n : outputs) {
+            for (auto &[n2, c] : n->incoming) {
+                file << c->activityWeights(0, 0) << "\n";
+            }
+        }
+    }
+
+    void load(char *filename) {
+        std::ifstream file(filename);
+        for (auto &n : neurons) {
+            for (auto &[n2, c] : n->incoming) {
+                file >> c->activityWeights(0, 0);
+                std::cout << c->activityWeights(0, 0) << "\n";
+            }
+        }
+
+        for (auto &n : outputs) {
+            for (auto &[n2, c] : n->incoming) {
+                file >> c->activityWeights(0, 0);
+                std::cout << c->activityWeights(0, 0) << "\n";
+            }
+        }
+    }
 
     Network(std::shared_ptr<class Input> _input) {
         this->input = _input;
@@ -248,26 +282,30 @@ class Network {
             const auto n = std::make_shared<Neuron>(1, 1, true);
             inputs.push_back(n);
             n->name = "input";
+            n->type = NeuronType::Input;
         }
 
         for (size_t k = 0; k < input->outputSize; k++) {
             const auto n = std::make_shared<Neuron>(1, 1, true);
             outputs.push_back(n);
             n->name = "output";
+            n->type = NeuronType::Output;
         }
 
         for (size_t i = 0; i < 2; i++) {
             const auto n = std::make_shared<Neuron>(1, 1);
             n->name = "n" + std::to_string(i);
             neurons.push_back(n);
+            n->type = NeuronType::Normal;
         }
         for (size_t k = 0; k < neurons.size(); k++) {
             const auto n = std::make_shared<Neuron>(1, 1, true);
             biases.push_back(n);
             Mat d(1, 1);
             d(0, 0) = 1.f;
-            n->setValues(d);
+            n->setActivity(d);
             n->name = "bias";
+            n->type = NeuronType::Bias;
         }
         for (size_t i = 0; i < neurons.size(); i++) {
             for (size_t j = 0; j < neurons.size(); j++) {
@@ -292,8 +330,6 @@ class Network {
         all.insert(all.end(), inputs.begin(), inputs.end());
         all.insert(all.end(), outputs.begin(), outputs.end());
         all.insert(all.end(), biases.begin(), biases.end());
-        totalError =
-            inputs.size() + outputs.size() + neurons.size() + biases.size();
     }
 
     bool inference(size_t index) {
@@ -301,28 +337,22 @@ class Network {
             return true;
         }
         for (size_t k = 0; k < inputs.size(); k++) {
-            inputs.at(k)->setValues(input->inputSetup(k, index));
+            inputs.at(k)->setActivity(input->inputSetup(k, index));
         }
         for (size_t k = 0; k < outputs.size(); k++) {
-            outputs.at(k)->setValues(input->outputSetup(k, index));
-        }
-        for (auto &n : all) {
-            n->recalcPrediction();
-            totalError -= n->getError().cwiseAbs().sum();
-            n->recalcError();
-            totalError += n->getError().cwiseAbs().sum();
+            outputs.at(k)->setActivity(input->outputSetup(k, index));
         }
 
-        std::set<neuron_ptr> visited(inputs.begin(), inputs.end());
-        std::set<neuron_ptr> children(inputs.begin(), inputs.end());
+        std::set<neuron_ptr> visited(outputs.begin(), outputs.end());
+        std::set<neuron_ptr> children(outputs.begin(), outputs.end());
 
         while (children.size() > 0) {
             std::set<neuron_ptr> newChildren;
             for (const auto &child : children) {
+                totalError -= abs(child->getError().sum());
                 const auto errors = child->update();
-                totalError -= errors.oldError.cwiseAbs().sum();
-                totalError += errors.newError.cwiseAbs().sum();
-                for (const auto &c : child->outgoing) {
+                totalError += abs(child->getError().sum());
+                for (const auto &c : child->incoming) {
                     if (visited.find(c.first) == visited.end()) {
                         visited.insert(c.first);
                         newChildren.insert(c.first);
@@ -341,9 +371,6 @@ class Network {
 
     double update() {
         if (cycleIndex >= maxCycle) {
-            if (cycleIndex == maxCycle) {
-                test();
-            }
             cycleIndex++;
             return lastError;
         }
@@ -360,12 +387,14 @@ class Network {
         }
         for (auto &n : all) {
             n->reset();
-            totalError += n->getError().cwiseAbs().sum();
+            if (n->type != NeuronType::Bias && n->type != NeuronType::Input) {
+                totalError += abs(n->getError().sum());
+            }
         }
         for (auto &b : biases) {
             Mat d(1, 1);
             d(0, 0) = 1.f;
-            b->setValues(d);
+            b->setActivity(d);
         }
 
         lastError = 0;
@@ -378,47 +407,60 @@ class Network {
             totalError = 0;
             for (auto &n : all) {
                 n->reset();
-                totalError += n->getError().cwiseAbs().sum();
             }
-
-            for (size_t k = 0; k < biases.size(); k++) {
-                Mat d(1, 1);
-                d(0, 0) = 1.f;
-                biases.at(k)->setValues(d);
-            }
-
             for (size_t j = 0; j < inputs.size(); j++) {
-                inputs.at(j)->setValues(input->inputSetup(j, k));
+                inputs.at(j)->setActivity(input->inputSetup(j, k));
             }
             for (size_t j = 0; j < outputs.size(); j++) {
                 outputs.at(j)->isInput = false;
             }
-            std::vector<neuron_ptr> allInputs(inputs.begin(), inputs.end());
-            allInputs.insert(allInputs.end(), outputs.begin(), outputs.end());
-            for (const auto &inputNeuron : allInputs) {
-                for (size_t i = 0; i < maxInference; i++) {
-                    std::set<neuron_ptr> visited = {inputNeuron};
-                    std::set<neuron_ptr> children = {inputNeuron};
-                    while (children.size() > 0) {
-                        std::set<neuron_ptr> newChildren;
-                        for (const auto &child : children) {
-                            const auto errors = child->update();
-
-                            totalError -= errors.oldError.cwiseAbs().sum();
-                            totalError += errors.newError.cwiseAbs().sum();
-                            for (const auto &c : child->outgoing) {
-                                if (visited.find(c.first) == visited.end()) {
-                                    visited.insert(c.first);
-                                    newChildren.insert(c.first);
-                                }
-                            }
-                        }
-                        children = newChildren;
-                    }
+            for (size_t k = 0; k < biases.size(); k++) {
+                Mat d(1, 1);
+                d(0, 0) = 1.f;
+                biases.at(k)->setActivity(d);
+            }
+            for (auto &n : all) {
+                n->recalcPrediction();
+                if (n->type != NeuronType::Bias &&
+                    n->type != NeuronType::Input) {
+                    totalError += abs(n->getError().sum());
+                    std::cout << "set====" << n->name << " " << n->getActivity()
+                              << " " << n->getPrediction() << "\n";
                 }
             }
+
+            lastError = 1;
+            for (size_t i = 0; i < maxInference; i++) {
+                std::set<neuron_ptr> visited(inputs.begin(), inputs.end());
+                std::set<neuron_ptr> children(inputs.begin(), inputs.end());
+                while (children.size() > 0) {
+                    std::set<neuron_ptr> newChildren;
+                    for (const auto &child : children) {
+                        totalError -= abs(child->getError()(0, 0));
+                        child->update();
+                        totalError += abs(child->getError()(0, 0));
+                        if (child->type == NeuronType::Normal) {
+                            std::cout << child->name
+                                      << ", activity=" << child->getActivity()
+                                      << ", pred=" << child->getPrediction()
+                                      << ", error=" << child->getError()
+                                      << "\n";
+                        }
+                        for (const auto &c : child->outgoing) {
+                            if (visited.find(c.first) == visited.end()) {
+                                visited.insert(c.first);
+                                newChildren.insert(c.first);
+                            }
+                        }
+                    }
+                    children = newChildren;
+                }
+                // std::cout << "total error ==============\n"
+                //           << totalError << "\n";
+            }
             const double res = outputs.at(0)->getPrediction().sum();
-            std::cout << "result=" << res << ", res=" << (res < 0.5 ? 0 : 1)
+            std::cout << std::fixed << std::setprecision(4) << "result=" << res
+                      << ", res=" << (res < 0.5 ? 0 : 1)
                       << ", totalError=" << totalError << "\n";
         }
     }
@@ -499,6 +541,9 @@ int main() {
     bool showOutgoing = true;
     bool showIncoming = false;
     bool showRepercussion = true;
+    bool toSave = false;
+    char saveFilename[100] = "./weights";
+    char loadFilename[100] = "./weights";
     while (!WindowShouldClose()) {
         BeginDrawing();
         rlImGuiBegin();
@@ -512,11 +557,43 @@ int main() {
                              errorX.size());
             ImPlot::EndPlot();
         }
+        ImGui::Begin("Options");
         if (ImGui::Button(paused ? "Go" : "Stop", {50, 30})) {
             paused = !paused;
         }
         ImGui::Checkbox("Show Outgoing", &showOutgoing);
         ImGui::Checkbox("Show Incoming", &showIncoming);
+
+        ImGui::BeginGroup();
+        if (ImGui::Button("Save")) {
+            toSave = true;
+        }
+        ImGui::SameLine();
+
+        if (toSave) {
+            if (ImGui::Button("Cancel")) {
+                toSave = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Confirm")) {
+                network.save(saveFilename);
+                toSave = false;
+            }
+        } else {
+            ImGui::InputText("File##savefile", saveFilename, 100);
+        }
+        ImGui::EndGroup();
+        ImGui::BeginGroup();
+        if (ImGui::Button("Load")) {
+            network.load(loadFilename);
+        }
+        ImGui::SameLine();
+        ImGui::InputText("File##loadfile", loadFilename, 100);
+        ImGui::EndGroup();
+        if (ImGui::Button("Test")) {
+            network.test();
+        }
+        ImGui::End();
 
         ImGui::Begin("Info");
         if (selected != nullptr) {

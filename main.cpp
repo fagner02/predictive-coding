@@ -42,7 +42,7 @@ struct RecalcResponse {
     Mat newError;
 };
 
-enum NeuronType { Output, Input, Normal, Hidden, Bias };
+enum NeuronType { Output, Input, Normal, Bias };
 
 class Neuron : public std::enable_shared_from_this<Neuron> {
   protected:
@@ -81,17 +81,12 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
         prediction = Mat::Random(rows, cols) * 0.1;
     }
 
-    void setActivity(Mat activity) {
-        //        this->prediction = activity;
-        this->activity = activity;
-    }
+    void setActivity(Mat activity) { this->activity = activity; }
 
     void recalcWeights() {
         for (auto &[neuron, connection] : incoming) {
-            connection->activityWeights +=
-                this->error.cwiseProduct(
-                    (this->sd).cwiseProduct(neuron->activity)) *
-                1;
+            connection->activityWeights += this->error.cwiseProduct(
+                (this->sd).cwiseProduct(neuron->activity));
         }
     }
 
@@ -203,6 +198,7 @@ class XorInput : public Input {
 };
 
 class SimpleInput : public Input {
+    const size_t indexes[10] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
     SimpleInput() : Input(10, 1) {}
     std::vector<double> dataInput = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
@@ -210,9 +206,9 @@ class SimpleInput : public Input {
     // std::vector<double> dataOutput = {1, 0, 1, 0, 1, 0, 1, 0, 1, 0};
     // std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
     Mat inputSetup(size_t neuronIndex, size_t dataIndex) override {
-
+        size_t index = indexes[dataIndex % 10];
         Mat d(1, 1);
-        if (neuronIndex == dataInput.at(dataIndex % 10)) {
+        if (neuronIndex == dataInput.at(index)) {
             d(0, 0) = 1;
         } else {
             d(0, 0) = 0;
@@ -220,13 +216,22 @@ class SimpleInput : public Input {
         return d;
     };
     Mat outputSetup(size_t neuronIndex, size_t dataIndex) override {
+        size_t index = indexes[dataIndex % 10];
         Mat d(1, 1);
-        d(0, 0) = dataOutput.at(dataIndex % 10);
+        d(0, 0) = dataOutput.at(index);
         return d;
     };
+
+    std::string getInputString(size_t dataIndex) override {
+        size_t index = indexes[dataIndex % 10];
+        return std::to_string(dataInput.at(index));
+    }
+    std::string getOutputString(size_t dataIndex) override {
+        size_t index = indexes[dataIndex % 10];
+        return std::to_string(dataOutput.at(index));
+    }
 };
 
-const size_t indexes[] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
 class Network {
   public:
     std::vector<neuron_ptr> inputs = {};
@@ -240,7 +245,7 @@ class Network {
     size_t cycleIndex = 0;
     size_t inferenceIndex = 0;
 
-    size_t maxCycle = 120;
+    size_t maxCycle = 1020;
     size_t maxInference = 200;
 
     double totalError;
@@ -279,33 +284,33 @@ class Network {
     Network(std::shared_ptr<class Input> _input) {
         this->input = _input;
         for (size_t k = 0; k < input->inputSize; k++) {
-            const auto n = std::make_shared<Neuron>(1, 1, true);
+            const auto n =
+                std::make_shared<Neuron>(1, 1, true, NeuronType::Input);
             inputs.push_back(n);
             n->name = "input";
-            n->type = NeuronType::Input;
         }
 
         for (size_t k = 0; k < input->outputSize; k++) {
-            const auto n = std::make_shared<Neuron>(1, 1, true);
+            const auto n =
+                std::make_shared<Neuron>(1, 1, true, NeuronType::Output);
             outputs.push_back(n);
             n->name = "output";
-            n->type = NeuronType::Output;
         }
 
         for (size_t i = 0; i < 2; i++) {
-            const auto n = std::make_shared<Neuron>(1, 1);
+            const auto n =
+                std::make_shared<Neuron>(1, 1, false, NeuronType::Normal);
             n->name = "n" + std::to_string(i);
             neurons.push_back(n);
-            n->type = NeuronType::Normal;
         }
         for (size_t k = 0; k < neurons.size(); k++) {
-            const auto n = std::make_shared<Neuron>(1, 1, true);
+            const auto n =
+                std::make_shared<Neuron>(1, 1, true, NeuronType::Bias);
             biases.push_back(n);
             Mat d(1, 1);
             d(0, 0) = 1.f;
             n->setActivity(d);
             n->name = "bias";
-            n->type = NeuronType::Bias;
         }
         for (size_t i = 0; i < neurons.size(); i++) {
             for (size_t j = 0; j < neurons.size(); j++) {
@@ -325,6 +330,12 @@ class Network {
             }
             biases.at(i)->addConnection(neurons.at(i));
             // neurons.at(i)->addConnection(biases.at(j));
+        }
+        for (auto &n : outputs) {
+            neuron_ptr bias =
+                std::make_shared<Neuron>(1, 1, true, NeuronType::Bias);
+            biases.push_back(bias);
+            bias->addConnection(n);
         }
         all.insert(all.end(), neurons.begin(), neurons.end());
         all.insert(all.end(), inputs.begin(), inputs.end());
@@ -424,8 +435,6 @@ class Network {
                 if (n->type != NeuronType::Bias &&
                     n->type != NeuronType::Input) {
                     totalError += abs(n->getError().sum());
-                    std::cout << "set====" << n->name << " " << n->getActivity()
-                              << " " << n->getPrediction() << "\n";
                 }
             }
 
@@ -439,13 +448,7 @@ class Network {
                         totalError -= abs(child->getError()(0, 0));
                         child->update();
                         totalError += abs(child->getError()(0, 0));
-                        if (child->type == NeuronType::Normal) {
-                            std::cout << child->name
-                                      << ", activity=" << child->getActivity()
-                                      << ", pred=" << child->getPrediction()
-                                      << ", error=" << child->getError()
-                                      << "\n";
-                        }
+
                         for (const auto &c : child->outgoing) {
                             if (visited.find(c.first) == visited.end()) {
                                 visited.insert(c.first);
@@ -455,8 +458,6 @@ class Network {
                     }
                     children = newChildren;
                 }
-                // std::cout << "total error ==============\n"
-                //           << totalError << "\n";
             }
             const double res = outputs.at(0)->getPrediction().sum();
             std::cout << std::fixed << std::setprecision(4) << "result=" << res
@@ -542,8 +543,8 @@ int main() {
     bool showIncoming = false;
     bool showRepercussion = true;
     bool toSave = false;
-    char saveFilename[100] = "./weights";
-    char loadFilename[100] = "./weights";
+    char saveFilename[100] = "./weights2";
+    char loadFilename[100] = "./weights2";
     while (!WindowShouldClose()) {
         BeginDrawing();
         rlImGuiBegin();
@@ -734,6 +735,7 @@ int main() {
             float speed = 0.4f;
             n.pos = Vector2{n.pos.x + (std::cos(angle) * speed),
                             n.pos.y + std::sin(angle) * speed};
+
             for (auto &[_, n2] : neuronsElems) {
                 float dx = n.pos.x - n2.pos.x;
                 float dy = n.pos.y - n2.pos.y;

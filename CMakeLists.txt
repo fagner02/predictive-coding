@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libs" FORCE)
@@ -15,15 +17,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-include_directories(${CMAKE_SOURCE_DIR}/include
- ${CMAKE_SOURCE_DIR}
- ${CMAKE_SOURCE_DIR}/src
-)
 
 include(FetchContent)
 
 add_executable(predictive_code
     main.cpp
+    inputs/input.hpp
+    inputs/simple_input.cpp
+    inputs/xor_input.cpp
+    inputs/majority_input.cpp
+    inputs/palindrome_input.cpp
 )
 
 find_package(OpenGL REQUIRED)

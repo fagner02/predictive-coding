@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <implot.h>
+#include <inputs/palindrome_input.hpp>
 #include <iomanip>
 #include <ios>
 #include <iostream>
@@ -17,7 +18,6 @@
 #include <raylib.h>
 #include <rlImGui.h>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -148,90 +148,6 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     void recalcError() { this->error = (activity - prediction); }
 };
 
-class Input {
-  public:
-    Input(size_t inputSize, size_t outputSize)
-        : inputSize(inputSize), outputSize(outputSize) {}
-    virtual Mat inputSetup(size_t, size_t) = 0;
-    virtual Mat outputSetup(size_t, size_t) = 0;
-    size_t inputSize;
-    size_t outputSize;
-
-    virtual std::string getInputString(size_t dataIndex) = 0;
-    virtual std::string getOutputString(size_t dataIndex) = 0;
-};
-
-class XorInput : public Input {
-  public:
-    XorInput() : Input(2, 1) {}
-    std::vector<double> dataInputA = {0, 0, 1, 1};
-    std::vector<double> dataInputB = {0, 1, 0, 1};
-    std::vector<double> dataOutput = {0, 1, 1, 0};
-
-    size_t xorIndexes[12] = {1, 0, 3, 2, 0, 3, 1, 2, 3, 0, 2, 1};
-    Mat inputSetup(size_t neuronIndex, size_t dataIndex) override {
-        const size_t index = xorIndexes[dataIndex % 12];
-
-        Mat d(1, 1);
-        d(0, 0) = neuronIndex ? dataInputA[index] : dataInputB[index];
-        return d;
-    }
-    Mat outputSetup(size_t neuronIndex, size_t dataIndex) override {
-        const size_t index = xorIndexes[dataIndex % 12];
-
-        Mat d(1, 1);
-        d(0, 0) = dataOutput.at(index);
-        return d;
-    }
-
-    std::string getInputString(size_t dataIndex) override {
-        std::stringstream ss;
-        const size_t index = xorIndexes[dataIndex % 12];
-        ss << dataInputA[index] << ", " << dataInputB[index];
-        return ss.str();
-    }
-
-    std::string getOutputString(size_t dataIndex) override {
-        const size_t index = xorIndexes[dataIndex % 12];
-        return std::to_string(dataOutput[index]);
-    }
-};
-
-class SimpleInput : public Input {
-    const size_t indexes[10] = {7, 0, 5, 9, 3, 2, 4, 1, 6, 8};
-    SimpleInput() : Input(10, 1) {}
-    std::vector<double> dataInput = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-    std::vector<double> dataOutput = {1, 1, 1, 1, 1, 0, 0, 0, 0, 0};
-    // std::vector<double> dataOutput = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
-    // std::vector<double> dataOutput = {1, 0, 1, 0, 1, 0, 1, 0, 1, 0};
-    // std::vector<double> dataOutput = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1};
-    Mat inputSetup(size_t neuronIndex, size_t dataIndex) override {
-        size_t index = indexes[dataIndex % 10];
-        Mat d(1, 1);
-        if (neuronIndex == dataInput.at(index)) {
-            d(0, 0) = 1;
-        } else {
-            d(0, 0) = 0;
-        }
-        return d;
-    };
-    Mat outputSetup(size_t neuronIndex, size_t dataIndex) override {
-        size_t index = indexes[dataIndex % 10];
-        Mat d(1, 1);
-        d(0, 0) = dataOutput.at(index);
-        return d;
-    };
-
-    std::string getInputString(size_t dataIndex) override {
-        size_t index = indexes[dataIndex % 10];
-        return std::to_string(dataInput.at(index));
-    }
-    std::string getOutputString(size_t dataIndex) override {
-        size_t index = indexes[dataIndex % 10];
-        return std::to_string(dataOutput.at(index));
-    }
-};
-
 class Network {
   public:
     std::vector<neuron_ptr> inputs = {};
@@ -245,7 +161,7 @@ class Network {
     size_t cycleIndex = 0;
     size_t inferenceIndex = 0;
 
-    size_t maxCycle = 1020;
+    size_t maxCycle = 5020;
     size_t maxInference = 200;
 
     double totalError;
@@ -313,24 +229,28 @@ class Network {
             n->name = "bias";
         }
         for (size_t i = 0; i < neurons.size(); i++) {
-            for (size_t j = 0; j < neurons.size(); j++) {
-                if (i == j) {
-                    continue;
-                }
-                // neurons.at(i)->addConnection(neurons.at(j));
-                // neurons.at(j)->addConnection(neurons.at(i));
-            }
-            for (size_t j = 0; j < inputs.size(); j++) {
-                inputs.at(j)->addConnection(neurons.at(i));
-                // neurons.at(i)->addConnection(inputs.at(j));
-            }
+            // for (size_t j = 4; j < neurons.size(); j++) {
+            //     if (i == j) {
+            //         continue;
+            //     }
+            //     neurons.at(i)->addConnection(neurons.at(j));
+            //     // neurons.at(j)->addConnection(neurons.at(i));
+            // }
+            // for (size_t j = 2*i; j < inputs.size(); j++) {
+            inputs.at(i)->addConnection(neurons.at(i));
+            inputs.at(inputs.size() - 1 - i)->addConnection(neurons.at(i));
             for (size_t j = 0; j < outputs.size(); j++) {
                 // outputs.at(j)->addConnection(neurons.at(i));
                 neurons.at(i)->addConnection(outputs.at(j));
             }
+            // neurons.at(i)->addConnection(inputs.at(j));
+            // }
             biases.at(i)->addConnection(neurons.at(i));
             // neurons.at(i)->addConnection(biases.at(j));
         }
+        // for (size_t i = 4; i < neurons.size(); i++) {
+        //     biases.at(i)->addConnection(neurons.at(i));
+        // }
         for (auto &n : outputs) {
             neuron_ptr bias =
                 std::make_shared<Neuron>(1, 1, true, NeuronType::Bias);
@@ -351,7 +271,12 @@ class Network {
             inputs.at(k)->setActivity(input->inputSetup(k, index));
         }
         for (size_t k = 0; k < outputs.size(); k++) {
+            outputs.at(k)->isInput = true;
             outputs.at(k)->setActivity(input->outputSetup(k, index));
+        }
+
+        for (auto &n : all) {
+            n->recalcPrediction();
         }
 
         std::set<neuron_ptr> visited(outputs.begin(), outputs.end());
@@ -414,7 +339,8 @@ class Network {
     }
 
     void test() {
-        for (size_t k = 0; k < 4; k++) {
+        std::cout << "\n\n";
+        for (size_t k = 0; k < input->dataCount; k++) {
             totalError = 0;
             for (auto &n : all) {
                 n->reset();
@@ -460,8 +386,9 @@ class Network {
                 }
             }
             const double res = outputs.at(0)->getPrediction().sum();
-            std::cout << std::fixed << std::setprecision(4) << "result=" << res
-                      << ", res=" << (res < 0.5 ? 0 : 1)
+            std::cout << std::fixed << std::setprecision(4)
+                      << "input=" << input->getInputString(k)
+                      << ", result=" << res << ", res=" << (res < 0.5 ? 0 : 1)
                       << ", totalError=" << totalError << "\n";
         }
     }
@@ -493,7 +420,7 @@ struct NeuronObject {
 };
 int main() {
 
-    Network network = Network(std::make_shared<XorInput>());
+    Network network = Network(std::make_shared<PalindromeInput>());
 
     std::map<neuron_ptr, NeuronObject> neuronsElems;
 

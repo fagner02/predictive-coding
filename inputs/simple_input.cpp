@@ -3,11 +3,7 @@
 Mat SimpleInput::inputSetup(size_t neuronIndex, size_t dataIndex) {
     size_t index = indexes[dataIndex % 10];
     Mat d(1, 1);
-    if (neuronIndex == dataInput.at(index)) {
-        d(0, 0) = 1;
-    } else {
-        d(0, 0) = 0;
-    }
+    d(0, 0) = dataInput.at(index) / 10;
     return d;
 };
 Mat SimpleInput::outputSetup(size_t neuronIndex, size_t dataIndex) {

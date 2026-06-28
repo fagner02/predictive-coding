@@ -1,3 +1,5 @@
+#include "inputs/simple_input.hpp"
+#include "inputs/xor_input.hpp"
 #include <Eigen/Dense>
 #include <cmath>
 #include <cstddef>
@@ -12,7 +14,6 @@
 #include <iostream>
 #include <map>
 #include <memory>
-#include <numeric>
 #include <ostream>
 #include <random>
 #include <raylib.h>
@@ -148,6 +149,10 @@ class Neuron : public std::enable_shared_from_this<Neuron> {
     void recalcError() { this->error = (activity - prediction); }
 };
 
+struct NetworkResponse {
+    double error;
+    size_t dataIndex;
+};
 class Network {
   public:
     std::vector<neuron_ptr> inputs = {};
@@ -161,7 +166,7 @@ class Network {
     size_t cycleIndex = 0;
     size_t inferenceIndex = 0;
 
-    size_t maxCycle = 5020;
+    size_t maxCycle = 5000;
     size_t maxInference = 200;
 
     double totalError;
@@ -229,28 +234,14 @@ class Network {
             n->name = "bias";
         }
         for (size_t i = 0; i < neurons.size(); i++) {
-            // for (size_t j = 4; j < neurons.size(); j++) {
-            //     if (i == j) {
-            //         continue;
-            //     }
-            //     neurons.at(i)->addConnection(neurons.at(j));
-            //     // neurons.at(j)->addConnection(neurons.at(i));
-            // }
-            // for (size_t j = 2*i; j < inputs.size(); j++) {
-            inputs.at(i)->addConnection(neurons.at(i));
-            inputs.at(inputs.size() - 1 - i)->addConnection(neurons.at(i));
+            for (size_t j = 0; j < inputs.size(); j++) {
+                inputs.at(j)->addConnection(neurons.at(i));
+            }
             for (size_t j = 0; j < outputs.size(); j++) {
-                // outputs.at(j)->addConnection(neurons.at(i));
                 neurons.at(i)->addConnection(outputs.at(j));
             }
-            // neurons.at(i)->addConnection(inputs.at(j));
-            // }
             biases.at(i)->addConnection(neurons.at(i));
-            // neurons.at(i)->addConnection(biases.at(j));
         }
-        // for (size_t i = 4; i < neurons.size(); i++) {
-        //     biases.at(i)->addConnection(neurons.at(i));
-        // }
         for (auto &n : outputs) {
             neuron_ptr bias =
                 std::make_shared<Neuron>(1, 1, true, NeuronType::Bias);
@@ -285,9 +276,9 @@ class Network {
         while (children.size() > 0) {
             std::set<neuron_ptr> newChildren;
             for (const auto &child : children) {
-                totalError -= abs(child->getError().sum());
+                totalError -= abs(child->getError()(0, 0));
                 const auto errors = child->update();
-                totalError += abs(child->getError().sum());
+                totalError += abs(child->getError()(0, 0));
                 for (const auto &c : child->incoming) {
                     if (visited.find(c.first) == visited.end()) {
                         visited.insert(c.first);
@@ -305,14 +296,16 @@ class Network {
         return false;
     }
 
-    double update() {
+    NetworkResponse update() {
         if (cycleIndex >= maxCycle) {
             cycleIndex++;
-            return lastError;
+            return {.error = lastError,
+                    .dataIndex = maxCycle % input->dataCount};
         }
 
         if (!inference(cycleIndex)) {
-            return lastError;
+            return {.error = lastError,
+                    .dataIndex = cycleIndex % input->dataCount};
         }
         inferenceIndex = 0;
 
@@ -335,7 +328,8 @@ class Network {
 
         lastError = 0;
         cycleIndex++;
-        return currentError;
+        return {.error = currentError,
+                .dataIndex = (cycleIndex - 1) % input->dataCount};
     }
 
     void test() {
@@ -420,7 +414,7 @@ struct NeuronObject {
 };
 int main() {
 
-    Network network = Network(std::make_shared<PalindromeInput>());
+    Network network = Network(std::make_shared<XorInput>());
 
     std::map<neuron_ptr, NeuronObject> neuronsElems;
 
@@ -442,7 +436,7 @@ int main() {
 
     rlImGuiSetup(true);
     ImPlot::CreateContext();
-
+    ImGui::GetIO().BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
     const float pointSize = 20;
     const float markerSize = 3;
     const float outlineSize = pointSize * 1.2;
@@ -450,6 +444,7 @@ int main() {
                                           {NeuronType::Input, GREEN},
                                           {NeuronType::Output, RED},
                                           {NeuronType::Bias, YELLOW}};
+
     for (auto &[_, n] : neuronsElems) {
         n.pos = {(float)GetScreenWidth() / 2, (float)GetScreenHeight() / 2};
         n.color = colors.at(n.type);
@@ -460,8 +455,19 @@ int main() {
     std::mt19937 gen(rd());
     std::uniform_real_distribution<> dis(-1.0, 1.0);
 
-    std::vector<double> errorQueue = {};
-    std::vector<double> errorX = {};
+    std::vector<std::vector<double>> errorQueue = {{}};
+    std::vector<std::vector<double>> inferenceErrors = {{}};
+    std::vector<double> inferenceX = {};
+    for (double i = 0; i < network.maxInference; i++) {
+        inferenceX.push_back((i + 1) / network.maxInference);
+    }
+    std::vector<double> inferenceMovingX = {};
+    std::vector<std::vector<double>> errorX = {};
+
+    for (size_t i = 0; i < network.input->dataCount; i++) {
+        errorQueue.push_back({});
+        errorX.push_back({});
+    }
     double maxError = 0;
 
     neuron_ptr selected;
@@ -477,14 +483,56 @@ int main() {
         rlImGuiBegin();
         const bool input = ImGui::GetIO().WantCaptureMouse;
 
-        if (ImPlot::BeginPlot("Total Error", {-1, 200})) {
-            ImPlot::SetupAxes("X", "Y");
-            ImPlot::SetupAxesLimits(0, 20, -maxError * 1.2, maxError * 1.2,
-                                    ImPlotCond_Always);
-            ImPlot::PlotLine("Error", errorX.data(), errorQueue.data(),
-                             errorX.size());
+        ImGui::Begin("TotalError");
+        if (ImPlot::BeginPlot("##totalerror", {-1, 120},
+                              ImPlotFlags_NoLegend)) {
+            ImPlot::SetupAxis(ImAxis_X1, "",
+                              ImPlotAxisFlags_NoTickLabels |
+                                  ImPlotAxisFlags_NoTickMarks);
+            ImPlot::SetupAxisFormat(ImAxis_Y1, "%.1f");
+            ImPlot::SetupAxesLimits(0, 1, 0, 1, ImPlotCond_Always);
+
+            for (size_t i = 0; i < network.input->dataCount; i++) {
+                ImPlotSpec spec;
+                spec.LineWeight = 2;
+                ImVec4 color =
+                    ImPlot::GetColormapColor(i % ImPlot::GetColormapSize());
+                color.w = 0.6;
+                spec.LineColor = color;
+                ImPlot::PlotLine(std::to_string(i).c_str(), errorX.at(i).data(),
+                                 errorQueue.at(i).data(), errorX.at(i).size(),
+                                 spec);
+            }
             ImPlot::EndPlot();
         }
+        ImGui::End();
+
+        ImGui::Begin("Inference");
+        if (ImPlot::BeginPlot("##inference", {-1, 120}, ImPlotFlags_NoLegend)) {
+            ImPlot::SetupAxis(ImAxis_X1, "",
+                              ImPlotAxisFlags_NoTickLabels |
+                                  ImPlotAxisFlags_NoTickMarks);
+            ImPlot::SetupAxesLimits(0, 1, 0, 2, ImPlotCond_Always);
+            ImPlot::SetupAxisFormat(ImAxis_Y1, "%.1f");
+
+            size_t stride = (float)(inferenceErrors.size()) /
+                            ((float)inferenceErrors.size() / 20.0);
+            ImPlotSpec spec;
+            spec.LineColor = ImVec4(0, 0, 1, 0.5);
+            for (size_t i = 0; i < inferenceErrors.size() - 1; i += stride) {
+                ImPlot::PlotLine("Inference", inferenceX.data(),
+                                 inferenceErrors.at(i).data(),
+                                 inferenceErrors.at(i).size(), spec);
+            }
+
+            size_t infIndex = inferenceErrors.size() - 1;
+            ImPlot::PlotLine("Inference", inferenceMovingX.data(),
+                             inferenceErrors.at(infIndex).data(),
+                             inferenceErrors.at(infIndex).size());
+            ImPlot::EndPlot();
+        }
+        ImGui::End();
+
         ImGui::Begin("Options");
         if (ImGui::Button(paused ? "Go" : "Stop", {50, 30})) {
             paused = !paused;
@@ -558,25 +606,32 @@ int main() {
         if (!input && ImGui::IsMouseReleased(MOUSE_BUTTON_LEFT)) {
             isMouseDown = false;
         }
-        ClearBackground(BLACK);
         if (!paused) {
             for (size_t k = 0; k < 10; k++) {
                 if (paused)
                     break;
-                const double error = network.update();
-                if (errorQueue.size() == 20) {
-                    errorQueue.erase(errorQueue.begin());
+                const NetworkResponse res = network.update();
+                if (network.inferenceIndex == network.maxInference) {
+                    errorQueue.at(res.dataIndex).push_back(res.error);
+                    errorX.at(res.dataIndex)
+                        .push_back(
+                            ((double)(errorQueue.at(res.dataIndex).size())) /
+                            ((double)network.maxCycle /
+                             network.input->dataCount));
+                    inferenceErrors.push_back({});
+                    inferenceMovingX = {};
+                    continue;
                 }
-                errorQueue.push_back(error);
-                if (maxError < abs(error)) {
-                    maxError = abs(error);
-                }
-                if (errorX.size() < 20) {
-                    errorX = std::vector<double>(errorQueue.size());
-                    std::iota(errorX.begin(), errorX.end(), 0);
-                }
+                inferenceErrors.at(inferenceErrors.size() - 1)
+                    .push_back(res.error);
+                inferenceMovingX.push_back(
+                    (double)(inferenceErrors.at(inferenceErrors.size() - 1)
+                                 .size()) /
+                    network.maxInference);
             }
         }
+        ClearBackground(BLACK);
+
         std::vector<Vector2> outgoingMarkers;
         for (auto &[p, n] : neuronsElems) {
             if (selected != nullptr && p != selected) {

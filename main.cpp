@@ -516,10 +516,11 @@ int main() {
             ImPlot::SetupAxisFormat(ImAxis_Y1, "%.1f");
 
             size_t stride = (float)(inferenceErrors.size()) /
-                            ((float)inferenceErrors.size() / 20.0);
-            ImPlotSpec spec;
-            spec.LineColor = ImVec4(0, 0, 1, 0.5);
+                            ((float)inferenceErrors.size() / 50.0);
             for (size_t i = 0; i < inferenceErrors.size() - 1; i += stride) {
+                ImPlotSpec spec;
+                float v = (float)i / inferenceErrors.size();
+                spec.LineColor = ImVec4(0.4 * v, 0.5 * v, 1 * v, 1);
                 ImPlot::PlotLine("Inference", inferenceX.data(),
                                  inferenceErrors.at(i).data(),
                                  inferenceErrors.at(i).size(), spec);

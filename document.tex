@@ -1,0 +1,67 @@
+\documentclass{article}
+
+\usepackage{amsmath,amsthm,amssymb,amsfonts}
+\usepackage{color}
+\usepackage{geometry}
+\usepackage{changepage}
+\usepackage{xcolor}
+
+\usepackage{tikz}
+
+% \tcancel[thickness]{math}%
+\newcommand{\cancel}[2][0.8pt]{%
+	\tikz[baseline=(X.base)]{
+		\node[inner sep=1pt] (X) {$#2$};
+		\draw[line width=#1, red, line cap=round] (X.south west) -- (X.north east);
+	}%
+}
+
+\begin{document}
+
+\begin{align*}
+	c_i&=\sum_{j=1}w_j\cdot h_j\\
+	h_1^{\text{next}}&=\sum_{i=1}w_i\cdot c_i\\
+	e_1^{\text{next}}&=a_1^\text{next}-h_1^\text{next}\\
+	E&=\frac{\sum_{k=1}(e_k^{\text{next}})^2}{2}\\
+	\frac{dE}{dw_j}&=\frac{dE}{de_k}\cdot \frac{de_k}{dh_k} \cdot \frac{dh_k}{dc_i} \cdot \frac{dc_i}{dw_j}\\
+\end{align*}
+
+\begin{align*}
+	\frac{dc_i}{dw_j}&=\frac{((w_j+d)\cdot h_j+r)-(w_j\cdot h_j+r)}{d}\\
+	\frac{dc_i}{dw_j}&=\frac{(w_jh_j+dh_j+r)-(w_jh_j+r)}{d}\\
+	\frac{dc_i}{dw_j}&=\frac{\cancel{w_jh_j}+dh_j+\cancel{r}-\cancel{w_jh_j}-\cancel{r}}{d}\\
+	\frac{dc_i}{dw_j}&=\frac{\cancel{d}h_j}{\cancel{d}}\\
+	\frac{dc_i}{dw_j}&=h_j\\
+\end{align*}
+
+\begin{align*}
+	\frac{dh_k}{dc_i}&=\frac{((w_i+d)\cdot c_i+r)-(w_i\cdot c_i+r)}{d}\\
+	\frac{dh_k}{dc_i}&=\frac{(w_ic_i+dc_i+r)-(w_ic_i+r)}{d}\\
+	\frac{dh_k}{dc_i}&=\frac{\cancel{w_ic_i}+dc_i+\cancel{r}-\cancel{w_ic_i}-\cancel{r}}{d}\\
+	\frac{dh_k}{dc_i}&=\frac{\cancel{d}c_i}{\cancel{d}}\\
+	\frac{dh_k}{dc_i}&=c_i\\
+\end{align*}
+
+\begin{align*}
+	\frac{de_k}{dh_k}&=\frac{(a_k^\text{next}- (h_k^\text{next}+d))-(a_k^\text{next}- h_k^\text{next})}{d}\\
+	\frac{de_k}{dh_k}&=\frac{a_k^\text{next}- h_k^\text{next}-d-a_k^\text{next}+ h_k^\text{next}}{d}\\
+	\frac{de_k}{dh_k}&=\frac{\cancel{a_k^\text{next}}- \cancel{h_k^\text{next}}-d-\cancel{a_k^\text{next}}+ \cancel{h_k^\text{next}}}{d}\\
+	\frac{de_k}{dh_k}&=\frac{-\cancel{d}}{\cancel{d}}\\
+	\frac{de_k}{de_k}&=-1
+\end{align*}
+
+\begin{align*}
+	\frac{dE}{de_k}&=\frac{((e_k^\text{next}+d)^2+r)-((e_k^\text{next})^2+r)}{2d}\\
+	\frac{dE}{de_k}&=\frac{((e_k^\text{next})^2+2e_k^\text{next}d+d^2+r)-((e_k^\text{next})^2+r)}{2d}\\
+	\frac{dE}{de_k}&=\frac{(e_k^\text{next})^2+2e_k^\text{next}d+d^2+r-(e_k^\text{next})^2-r}{2d}\\
+	\frac{dE}{de_k}&=\frac{\cancel{(e_k^\text{next})^2}+2e_k^\text{next}d+d^2+\cancel{r}-\cancel{(e_k^\text{next})^2}-\cancel{r}}{2d}\\
+	\frac{dE}{de_k}&=\frac{2e_k^\text{next}\cancel{d}+\cancel{d}^2}{2\cancel{d}}\\
+	\frac{dE}{de_k}&=\frac{2e_k^\text{next}+d}{2}\\
+	\lim_{d\to 0}&=\frac{\cancel{2}e_k^\text{next}}{\cancel{2}}\\
+	\frac{dE}{de_k}&=e_k^\text{next}\\
+\end{align*}
+
+\begin{align*}
+	\frac{dE}{dw_j}&=e_k^\text{next}\cdot -1\cdot c_i\cdot h_j\\
+\end{align*}
+\end{document}

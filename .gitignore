@@ -2,3 +2,7 @@ media
 .vscode
 .cache
 build
+*.aux
+*.log
+*.pdf
+*.synctex.gz

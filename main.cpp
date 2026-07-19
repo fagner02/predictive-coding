@@ -1,5 +1,6 @@
 #include "inputs/simple_input.hpp"
-#include "inputs/xor_input.hpp"
+#include "neuron.hpp"
+#include "types.hpp"
 #include <Eigen/Dense>
 #include <cmath>
 #include <cstddef>
@@ -12,7 +13,6 @@
 #include <iomanip>
 #include <ios>
 #include <iostream>
-#include <map>
 #include <memory>
 #include <ostream>
 #include <random>
@@ -22,132 +22,9 @@
 #include <string>
 #include <vector>
 
-typedef Eigen::MatrixXd Mat;
 class Neuron;
 
 bool paused = true;
-
-struct Connection {
-    Mat activityWeights;
-};
-
-typedef std::shared_ptr<Neuron> neuron_ptr;
-typedef std::shared_ptr<Connection> conn_ptr;
-
-struct OutgoingConnection {
-    conn_ptr incoming;
-};
-
-struct RecalcResponse {
-    Mat oldError;
-    Mat newError;
-};
-
-enum NeuronType { Output, Input, Normal, Bias };
-
-class Neuron : public std::enable_shared_from_this<Neuron> {
-  protected:
-    Mat activity;
-    Mat prediction;
-    Mat error;
-    Mat sd;
-
-  public:
-    NeuronType type;
-    bool isInput;
-    std::map<neuron_ptr, conn_ptr> incoming = {};
-    std::map<neuron_ptr, OutgoingConnection> outgoing = {};
-    std::string name;
-
-    Neuron(size_t rows, size_t cols, bool isInput = false,
-           NeuronType type = NeuronType::Normal) {
-        activity = Mat::Random(rows, cols) * 0.1;
-        prediction = Mat::Random(rows, cols) * 0.1;
-        error = Mat::Ones(rows, cols);
-        this->isInput = isInput;
-        this->type = type;
-    }
-
-    Mat getActivity() { return this->activity; }
-
-    Mat getPrediction() { return this->prediction; }
-
-    Mat getError() { return this->error; }
-
-    void reset() {
-        size_t rows = activity.rows();
-        size_t cols = activity.cols();
-
-        activity = Mat::Random(rows, cols) * 0.1;
-        prediction = Mat::Random(rows, cols) * 0.1;
-    }
-
-    void setActivity(Mat activity) { this->activity = activity; }
-
-    void recalcWeights() {
-        for (auto &[neuron, connection] : incoming) {
-            connection->activityWeights += this->error.cwiseProduct(
-                (this->sd).cwiseProduct(neuron->activity));
-        }
-    }
-
-    void addConnection(neuron_ptr neuron) {
-        const auto &rows = neuron->activity.rows();
-        const auto &cols = neuron->activity.cols();
-
-        conn_ptr newConnection = std::make_shared<Connection>(Connection{
-            .activityWeights = Mat::Random(rows, cols) * 0.1,
-        });
-        outgoing.insert({neuron, {.incoming = newConnection}});
-        neuron->incoming.insert({shared_from_this(), newConnection});
-    }
-
-    Mat sigmoidDerivative(Mat m) {
-        auto e = (-m.array()).exp();
-        auto res = (1 + e);
-        return (e / (res * res)).matrix();
-    }
-
-    Mat sigmoid(Mat m) { return (1 / (1 + (-m.array()).exp())).matrix(); }
-
-    void recalcActivity() {
-        if (isInput) {
-            return;
-        }
-        Mat delta = -error;
-
-        std::vector<neuron_ptr> toErase = {};
-
-        for (const auto &[neuron, connection] : outgoing) {
-            const auto thisWeights = connection.incoming->activityWeights;
-
-            delta += thisWeights.cwiseProduct(
-                neuron->error.cwiseProduct(neuron->sd));
-        }
-        this->activity += delta * 0.1;
-    }
-
-    RecalcResponse update() {
-        recalcPrediction();
-        const Mat oldError = this->error;
-        recalcError();
-        const Mat newError = this->error;
-        recalcActivity();
-        return {oldError, newError};
-    }
-
-    void recalcPrediction() {
-        this->prediction.setZero();
-        for (const auto &[neuron, connection] : incoming) {
-            this->prediction +=
-                neuron->activity.cwiseProduct(connection->activityWeights);
-        }
-        sd = sigmoidDerivative(this->prediction);
-        this->prediction = sigmoid(this->prediction);
-    }
-
-    void recalcError() { this->error = (activity - prediction); }
-};
 
 struct NetworkResponse {
     double error;
@@ -167,7 +44,7 @@ class Network {
     size_t inferenceIndex = 0;
 
     size_t maxCycle = 5000;
-    size_t maxInference = 200;
+    size_t maxInference = 50;
 
     double totalError;
     double lastError = 0;
@@ -277,7 +154,7 @@ class Network {
             std::set<neuron_ptr> newChildren;
             for (const auto &child : children) {
                 totalError -= abs(child->getError()(0, 0));
-                const auto errors = child->update();
+                child->update();
                 totalError += abs(child->getError()(0, 0));
                 for (const auto &c : child->incoming) {
                     if (visited.find(c.first) == visited.end()) {
@@ -359,7 +236,7 @@ class Network {
             }
 
             lastError = 1;
-            for (size_t i = 0; i < maxInference; i++) {
+            for (size_t i = 0; i < 500; i++) {
                 std::set<neuron_ptr> visited(inputs.begin(), inputs.end());
                 std::set<neuron_ptr> children(inputs.begin(), inputs.end());
                 while (children.size() > 0) {
@@ -414,7 +291,7 @@ struct NeuronObject {
 };
 int main() {
 
-    Network network = Network(std::make_shared<XorInput>());
+    Network network = Network(std::make_shared<SimpleInput>());
 
     std::map<neuron_ptr, NeuronObject> neuronsElems;
 

@@ -27,6 +27,8 @@ add_executable(predictive_code
     inputs/xor_input.cpp
     inputs/majority_input.cpp
     inputs/palindrome_input.cpp
+    inputs/grammarinput.cpp
+    neuron.cpp
 )
 
 find_package(OpenGL REQUIRED)

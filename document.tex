@@ -64,4 +64,17 @@
 \begin{align*}
 	\frac{dE}{dw_j}&=e_k^\text{next}\cdot -1\cdot c_i\cdot h_j\\
 \end{align*}
+
+\begin{align*}
+	&\text{Let there be all incoming neurons }x_1,x_2\dots x_n\\
+	h&=\sum_{x_i}\{x_i<l_i: 0, \{x_i>u_i: 0, x_i\}\}\cdot w^h_i\\
+\end{align*}
+
+\begin{align*}
+	\begin{cases}
+		0 & \text{if } h_1 < l^h_1\\
+		0 & \text{if } h_1 > u^h_1\\
+		h_1 & \text{if } h_1\geq l^h_1 \text{ and } h_1\leq u^h_1
+	\end{cases}
+\end{align*}
 \end{document}

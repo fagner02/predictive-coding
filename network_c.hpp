@@ -1,5 +1,6 @@
 #include "capped_neuron.hpp"
 #include "types.hpp"
+#include <cstdlib>
 #include <memory>
 #include <set>
 #include <vector>
@@ -64,6 +65,32 @@ class NetworkC {
                 }
             }
             parents = newParents;
+        }
+        for (auto &n : neurons) {
+            if (!n->isActive) {
+                continue;
+            }
+            n->wasActive = true;
+            n->isActive = false;
+
+            for (auto &[child, outCon] : n->outgoing) {
+                double w = outCon.connection->weight;
+                double a = child->activity - n->activity * w;
+
+                double center = child->lowerBound +
+                                (child->upperBound - child->lowerBound) / 2;
+
+                double increase = a + n->activity * (w + 0.1);
+                double decrease = a + n->activity * (w - 0.1);
+
+                // Remember to add breaks for when the activity goes off the
+                // bounds
+                if (abs(increase - center) < abs(decrease - center)) {
+                    outCon.connection->weight = w + 0.1;
+                } else {
+                    outCon.connection->weight = w - 0.1;
+                }
+            }
         }
     }
 

@@ -5,7 +5,7 @@
 \usepackage{geometry}
 \usepackage{changepage}
 \usepackage{xcolor}
-
+\usepackage[thinc]{esdiff}
 \usepackage{tikz}
 
 % \tcancel[thickness]{math}%
@@ -77,4 +77,113 @@
 		h_1 & \text{if } h_1\geq l^h_1 \text{ and } h_1\leq u^h_1
 	\end{cases}
 \end{align*}
+
+\begin{align*}
+\diff{d}{w^{h_6}} &= \diff{d}{o} \cdot \diff{o}{h_6} \cdot \diff{h_6}{w^{h_6}}\\
+\diff{d}{w^{h_6}} &= -1\cdot w_3^o \cdot 1=-w_3^o\\
+\Delta w^{h_6} &= -\diff{d}{w^{h_6}}=-(-w_3^o)=w_3^o\\
+h_6&=\underbrace{h_1\cdot w_1^{h_6}}_{r}+ 1\cdot w_2^{h_6}\\
+\diff{h_6}{w}&=\frac{(r+1\cdot (w_2^{h_6}+d))-(r+1\cdot w_2^{h_6})}{d}\\
+&=\frac{(r+w_2^{h_6}+d)-(r+1\cdot w_2^{h_6})}{d}\\
+&=\frac{\cancel{r}+\cancel{w_2^{h_6}}+d-\cancel{r}-\cancel{w_2^{h_6}}}{d}\\
+&=\frac{d}{d}\\
+&=1
+\end{align*}
+
+\begin{align*}
+o&=\underbrace{h_7\cdot w_1^o+1\cdot w_2^o}_{r}+ h_6\cdot w_3^o\\
+\diff{o}{h_6}&=\frac{(r+(h_6+d)\cdot w_3^o)-(r+h_6\cdot w_3^o)}{d}\\
+&=\frac{(r+h_6w_3^o+dw_3^o)-(r+h_6\cdot w_3^o)}{d}\\
+&=\frac{r+h_6w_3^o+dw_3^o-r-h_6w_3^o}{d}\\
+&=\frac{\cancel{r}+\cancel{h_6w_3^o}+dw_3^o-\cancel{r}-\cancel{h_6w_3^o}}{d}\\
+&=\frac{\cancel{d}w_3^o}{\cancel{d}}\\
+&=w_3^o
+\end{align*}
+
+\begin{align*}
+	d&=\frac{(p-o)^2}{2}\\
+	\diff{d}{o}&=\frac{(p-(o+d))^2-(p-o)^2}{2d}\\
+	&=\frac{(p-o-d)^2-(p-o)^2}{2d}\\
+	&=\frac{(p^2-2po-2pd+o^2+2od+d^2)-(p^2-2po+o^2)}{2d}\\
+	&=\frac{\cancel{p^2}-\cancel{2po}-2pd+\cancel{o^2}+2od+d^2-\cancel{p^2}+\cancel{2po}-\cancel{o^2}}{2d}\\
+	&=\frac{-2p\cancel{d}+2o\cancel{d}+\cancel{d}^2}{2\cancel{d}}\\
+	&=\frac{-\cancel{2}p+\cancel{2}o+d}{\cancel{2}}\\
+	\lim_{d\to 0}&=-p+o+d=-p+o
+\end{align*}
+
+\begin{align*}
+	d&=p-o\\
+	\diff{d}{o}&=\frac{(p-(o+d))-(p-o)}{d}\\
+	&=\frac{p-o-d-p+o}{d}\\
+	&=\frac{\cancel{p}-\cancel{o}-d-\cancel{p}+\cancel{o}}{d}\\
+	&=\frac{-d}{d}\\
+	&=-1
+\end{align*}
+
+\begin{align*}
+	&\text{For }x=4 \\   
+	h_1 &= 0, h_2 = 0\\
+	h_6 &= h_1 \cdot w_1^{h_6} + 1 \cdot w_2^{h_6}\\
+	&= 0 \cdot 0 + 1 \cdot 0\\
+	&= 0\\
+	h_7 &= h_2 \cdot w_1^{h_7} + 1 \cdot w_2^{h_7}\\
+	&= 0 \cdot 0 + 1 \cdot 1\\
+	&= 1, \text{inactive}=0\\
+	o &= 1 \cdot w_1^o + h_7 \cdot w_2^o+h_6\cdot w_3^o\\
+	&= 1\cdot 0 +0 \cdot 1 + 0 \cdot 1\\
+	&=0\\
+	p &= 1\\
+	d &= (p - o)^2 = (1 - 0)^2 = 1\\
+\end{align*}
+
+\begin{minipage}[th]{0.4\textwidth}
+\begin{align*}
+	&\text{For }x=3 \\   
+	h_1 &= 0\text{ (inactive)}, h_2 = 0.5\\
+	h_6 &= 1\\
+	h_7 &= h_2 \cdot w_1^{h_7} + 1 \cdot w_2^{h_7}\\
+	&= 0.5 \cdot 0 + 1 \cdot 1\\
+	&= 0+1= 1\\
+	o &= 1 \cdot w_1^o + h_7 \cdot w_2^o+h_6\cdot w_3^o\\
+	&= 1\cdot 0 +1 \cdot 1 + 1 \cdot 1\\
+	&=0+1+1\\
+	&=2\\
+	p &= 0\\
+	d &= (p - o)^2 = (0 - 2)^2 = 4\\
+	\Delta w_2^{h_7}&=-ow_2^o+pw_2^o\\
+	&=-2\cdot 1+0\cdot 1\\
+	&=-2\\
+\end{align*}
+\end{minipage}
+\begin{minipage}[th]{0.4\textwidth}
+\begin{align*}
+	&\text{For each outgoing neuron}\\
+	\text{weightedTarget}&=p-(o-h_7\cdot w_2^o)\\
+	&=0-(2-1\cdot 1)\\
+	&=-1\\
+	\text{weightedTarget}&=\text{target}\cdot w_2^o\\
+	\text{target}&=\begin{cases} 
+		\frac{\text{weightedTarget}}{w_2^o} &\text{if } w_2^o \ne0\\
+		h_7 &\text{if } w_2^o=0
+	\end{cases}\\
+	\text{target}&=\frac{-1}{1}\\
+	&=-1\\
+	d&=(\text{target}-h_7)^2\\
+	&=(-1-1)^2\\
+	&=(-2)^2\\
+	&=4\\
+	\Delta w^{h_7}_2&=-h_7\cdot w_2^o+\text{target}\cdot w_2^o\\
+	&=-1\cdot 1 + -1 \cdot 1\\
+	&=-1+-1\\
+	&=-2
+\end{align*}
+
+\begin{align*}
+	&\text{At the start}\\
+	\text{expectedReward}&=0\\
+\text{predictionError} &= \text{actual} - \text{prediction}\\
+\text{reward}&=0.5-|\text{predictionError}|\\
+\text{rewardError}&=\text{reward}-\text{expectedReward}
+\end{align*}
+\end{minipage}
 \end{document}

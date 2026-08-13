@@ -1,11 +1,13 @@
 #include "capped_neuron.hpp"
 #include "types.hpp"
+#include <cstddef>
 #include <cstdlib>
 #include <memory>
 #include <set>
 #include <vector>
 
 class NetworkC {
+  public:
     std::vector<capped_neuron_ptr> neurons;
     std::vector<capped_neuron_ptr> input;
     std::vector<capped_neuron_ptr> output;
@@ -13,6 +15,7 @@ class NetworkC {
     std::set<capped_neuron_ptr> nextParents = {};
 
     size_t cycleIndex = 0;
+    size_t maxCycle = 100;
 
     NetworkC() {
         capped_neuron_ptr n =
@@ -40,10 +43,12 @@ class NetworkC {
         neurons.at(3)->addConnection(neurons.at(4), ConnectionType::Inhibitory);
     }
 
-    void propagate(double data) {
-        std::set<capped_neuron_ptr> parents = {input.at(0)};
+    bool propagate(double data) {
+        std::set<capped_neuron_ptr> parents = {nextParents.begin(),
+                                               nextParents.end()};
         std::set<capped_neuron_ptr> visited = {};
         input.at(0)->activity = data;
+        nextParents = {};
 
         while (!parents.empty()) {
             std::set<capped_neuron_ptr> newParents = {};
@@ -66,6 +71,7 @@ class NetworkC {
             }
             parents = newParents;
         }
+
         for (auto &n : neurons) {
             if (!n->isActive) {
                 continue;
@@ -77,25 +83,44 @@ class NetworkC {
                 double w = outCon.connection->weight;
                 double a = child->activity - n->activity * w;
 
-                double center = child->lowerBound +
-                                (child->upperBound - child->lowerBound) / 2;
+                double center =
+                    child->type == NeuronType::Output
+                        ? 1 - (int)data % 2
+                        : child->lowerBound +
+                              (child->upperBound - child->lowerBound) / 2;
 
                 double increase = a + n->activity * (w + 0.1);
                 double decrease = a + n->activity * (w - 0.1);
 
-                // Remember to add breaks for when the activity goes off the
-                // bounds
+                bool wasOver = child->activity > child->upperBound;
+                bool wasUnder = child->activity < child->lowerBound;
+
                 if (abs(increase - center) < abs(decrease - center)) {
-                    outCon.connection->weight = w + 0.1;
+                    if (increase <= child->upperBound || wasOver) {
+                        // Should increase
+                        outCon.connection->weight = w + 0.1;
+                    }
                 } else {
-                    outCon.connection->weight = w - 0.1;
+                    if (decrease >= child->lowerBound || wasUnder) {
+                        // Should decrease
+                        outCon.connection->weight = w - 0.1;
+                    }
                 }
             }
         }
+        if (nextParents.empty()) {
+            return true;
+        }
+        return false;
     }
 
     void update() {
-        propagate(cycleIndex % 10);
+        if (cycleIndex == maxCycle) {
+            return;
+        }
+        if (!propagate(cycleIndex % 10)) {
+            return;
+        }
         cycleIndex++;
     }
 };
